@@ -62,9 +62,10 @@ export function FactorICChart({ result }: Props) {
           data: values.map(v => ({
             value: v,
             itemStyle: {
+              // 绿正红负（国际惯例）
               color: v >= 0
-                ? 'rgba(240,68,56,0.6)'
-                : 'rgba(18,183,106,0.6)',
+                ? 'rgba(18,183,106,0.6)'
+                : 'rgba(240,68,56,0.6)',
             },
           })),
           barMaxWidth: 6,

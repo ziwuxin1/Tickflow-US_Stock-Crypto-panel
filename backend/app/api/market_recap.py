@@ -34,7 +34,7 @@ class AnalyzeRequest(BaseModel):
 async def analyze_market(request: Request, req: AnalyzeRequest):
     """AI 大盘复盘 — NDJSON 流式返回。
 
-    装配市场总览(指数/涨跌/连板/封板/板块/情绪雷达)→ 复盘提示词 →
+    装配市场总览(基准/涨跌宽度/大波动/情绪雷达)→ 复盘提示词 →
     流式调用 LLM → 逐 chunk 以 NDJSON 推给前端(每行一个 JSON)。
 
     协议:
@@ -47,7 +47,6 @@ async def analyze_market(request: Request, req: AnalyzeRequest):
 
     repo = request.app.state.repo
     quote_service = getattr(request.app.state, "quote_service", None)
-    depth_service = getattr(request.app.state, "depth_service", None)
 
     as_of = None
     if req.as_of:
@@ -57,7 +56,7 @@ async def analyze_market(request: Request, req: AnalyzeRequest):
             raise HTTPException(400, f"as_of 格式应为 YYYY-MM-DD,收到: {req.as_of}")
 
     async def stream_gen():
-        async for chunk in recap_market_stream(repo, quote_service, depth_service, as_of, req.focus):
+        async for chunk in recap_market_stream(repo, quote_service, as_of=as_of, focus=req.focus):
             yield chunk + "\n"
 
     return StreamingResponse(

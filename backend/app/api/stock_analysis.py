@@ -105,7 +105,7 @@ def _build_series(df: pl.DataFrame) -> dict:
 @router.get("/levels")
 def get_levels(
     request: Request,
-    symbol: str = Query(..., description="标的代码,如 000001.SZ"),
+    symbol: str = Query(..., description="标的代码,如 AAPL.US / BTCUSDT"),
     days: int = Query(120, ge=30, le=500, description="计算样本天数"),
 ):
     """计算 11 类关键价位(成交密集区压力支撑 / 枢轴点 / 前高前低 /

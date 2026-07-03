@@ -7,12 +7,9 @@ META = {
     "description": "MA60上方 + 60日新高 + 量能 ≥ 2倍均量",
     "tags": ["趋势", "突破", "放量"],
     "basic_filter": {
-        "price_min": 5,
-        "price_max": 200,
-        "market_cap_min": 20e8,
-        "amount_min": 1e8,
-        "exclude_st": True,
-        "exclude_new_days": 60,
+        "price_min": 2.0,
+        "market_cap_min": 3e8,
+        "amount_min": 1e7,
     },
     "params": [
         {"id": "vol_ratio_min", "label": "最低量比", "type": "float",

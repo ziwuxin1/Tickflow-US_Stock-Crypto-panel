@@ -2,11 +2,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import threading
 from datetime import date, datetime, timezone
-from functools import reduce
 from typing import Any
 
 import httpx
@@ -14,7 +11,6 @@ import httpx
 from app.services.ext_data import (
     ExtConfig,
     ExtConfigStore,
-    PullConfig,
     rows_to_parquet,
 )
 
@@ -75,19 +71,6 @@ def _apply_field_map(rows: list[dict], field_map: dict[str, str]) -> list[dict]:
 # 拉取执行
 # ---------------------------------------------------------------------------
 
-def _apply_preset_flatten(config_id: str, rows: list[dict]) -> list[dict]:
-    """对内置预设 (概念/行业) 应用结构转换, 与 fetch_preset 保持一致。
-
-    延迟导入避免与 ext_presets 形成循环依赖。
-    非预设 id 原样返回。
-    """
-    if config_id not in ("ext_gn_ths", "ext_hy_ths"):
-        return rows
-    from app.services.ext_presets import _flatten_concept_rows, _flatten_industry_rows
-    flatten = _flatten_concept_rows if config_id == "ext_gn_ths" else _flatten_industry_rows
-    return flatten(rows)
-
-
 async def fetch_and_ingest(
     config: ExtConfig,
     data_dir,
@@ -123,12 +106,6 @@ async def fetch_and_ingest(
     rows = _extract_rows(data, pull.response_path)
     if not rows:
         raise ValueError("提取到的行数为 0")
-
-    # 内置预设 (概念/行业): 应用结构转换, 让产出 schema 与分析页一致。
-    # 否则 raw 接口列 (concepts/industries 数组、name) 会直接覆盖正确的 part.parquet,
-    # 导致分析页因找不到维度字段 (所属概念/所属同花顺行业) 而"数据消失"。
-    # 见 ext_presets._flatten_* —— 手动拉取 / 定时拉取都必须走同一套转换。
-    rows = _apply_preset_flatten(config.id, rows)
 
     # 字段映射
     rows = _apply_field_map(rows, pull.field_map)
@@ -231,57 +208,6 @@ class PullScheduler:
                     logger.info("PullScheduler: removed %s", cid)
 
         self._submit(_apply)
-
-    async def _run_loop(self, config: ExtConfig) -> None:
-        """单个配置的定时拉取循环。
-
-        策略: 启用后立即执行一次, 之后按 interval 循环。
-        每次循环重读最新配置 (fresh), interval 取自 fresh.pull.schedule_minutes,
-        这样用户中途修改间隔也能立即生效 (无需重启)。
-        """
-        try:
-            while self._running:
-                # 每轮重读最新配置 — 用户可能修改了 url / interval / enabled
-                store = ExtConfigStore(self._data_dir)
-                fresh = store.get(config.id)
-                if not fresh or not fresh.pull or not fresh.pull.enabled:
-                    break
-                pull = fresh.pull
-
-                # 先执行一次 (启用即拉取, 让用户立刻看到生效)
-                try:
-                    n, d = await fetch_and_ingest(fresh, self._data_dir)
-                    fresh.pull.last_run = datetime.now(timezone.utc).isoformat()
-                    fresh.pull.last_status = "success"
-                    fresh.pull.last_message = f"{n} rows @ {d}"
-                    fresh.pull.last_rows = n
-                    store.upsert(fresh)
-                    logger.info("PullScheduler: %s success, %d rows", config.id, n)
-                except Exception as e:
-                    fresh2 = store.get(config.id)
-                    if fresh2 and fresh2.pull:
-                        fresh2.pull.last_run = datetime.now(timezone.utc).isoformat()
-                        fresh2.pull.last_status = "error"
-                        fresh2.pull.last_message = str(e)[:200]
-                        store.upsert(fresh2)
-                    logger.warning("PullScheduler: %s error: %s", config.id, e)
-
-                # 间隔取自最新配置 (每次重新读取, 修复改间隔不生效)
-                interval = max(pull.schedule_minutes * 60, 60)  # 至少 60s
-                # 预告下次运行时间, 供前端展示
-                next_dt = datetime.now(timezone.utc).timestamp() + interval
-                latest = store.get(config.id)
-                if latest and latest.pull:
-                    latest.pull.next_run = datetime.fromtimestamp(
-                        next_dt, tz=timezone.utc
-                    ).isoformat()
-                    store.upsert(latest)
-
-                await asyncio.sleep(interval)
-                if not self._running:
-                    break
-        except asyncio.CancelledError:
-            pass
 
     async def _run_loop(self, config: ExtConfig) -> None:
         """单个配置的定时拉取循环。

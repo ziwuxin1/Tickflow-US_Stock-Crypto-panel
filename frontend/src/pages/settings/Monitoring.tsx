@@ -1,12 +1,10 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useQueryClient, useMutation, useQuery } from '@tanstack/react-query'
 import {
   Activity,
   Wifi,
   BarChart3,
-  Flame,
-  Zap,
   Webhook,
   ChevronDown,
 } from 'lucide-react'
@@ -21,25 +19,23 @@ import { api } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { tierRank } from '@/lib/capability-labels'
 import { toast } from '@/components/Toast'
-import { DepthConfigContent } from '@/components/data/DepthConfigCard'
 
 // 页面 → 显示名
 const PAGE_LABELS: Record<string, string> = {
   'overview-market': '看板',
   watchlist: '自选页',
-  'limit-ladder': '连板梯队',
 }
 
 const SIDEBAR_INDEX_OPTIONS = [
-  { symbol: '000001.SH', name: '上证指数' },
-  { symbol: '399001.SZ', name: '深证成指' },
-  { symbol: '399006.SZ', name: '创业板指' },
-  { symbol: '000680.SH', name: '科创综指' },
+  { symbol: 'SPY.US', name: '标普500ETF' },
+  { symbol: 'QQQ.US', name: '纳指100ETF' },
+  { symbol: 'BTCUSDT', name: '比特币' },
+  { symbol: 'ETHUSDT', name: '以太坊' },
 ]
 
 // ===== 导出为 Panel 组件 (由 Settings.tsx 嵌入) =====
 
-export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = {}) {
+export function SettingsMonitoringPanel(_props: { highlight?: string } = {}) {
   const qc = useQueryClient()
   const { data: prefs } = usePreferences()
   const { data: caps } = useCapabilities()
@@ -52,8 +48,6 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
   const isFreeTier = tier === 0
   const realtimeEnabled = prefs?.realtime_quotes_enabled ?? false
   const refreshPages = prefs?.sse_refresh_pages ?? {}
-  const limitLadderMonitor = prefs?.limit_ladder_monitor_enabled ?? false
-  const hasDepth = !!caps?.capabilities?.['depth5.batch']
   // 新建监控规则时是否默认勾选飞书推送 (全局默认值, 单条规则可独立修改)
   const webhookDefault = prefs?.webhook_enabled_default ?? false
   const sidebarIndexSymbols = prefs?.sidebar_index_symbols ?? SIDEBAR_INDEX_OPTIONS.map(i => i.symbol)
@@ -114,11 +108,6 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
     api.updateIndicesNavPinned(pinned).then(() => qc.invalidateQueries({ queryKey: QK.preferences }))
   }, [qc])
 
-  const toggleLimitLadderMonitor = useCallback(async (enabled: boolean) => {
-    await api.updateLimitLadderMonitor(enabled)
-    qc.invalidateQueries({ queryKey: QK.preferences })
-  }, [qc])
-
   const toggleWebhookDefault = useCallback(async (enabled: boolean) => {
     await api.updateWebhookDefault(enabled)
     qc.invalidateQueries({ queryKey: QK.preferences })
@@ -144,16 +133,6 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
     saveFeishuWebhook.mutate({ url, secret })
   }, [feishuDraft, feishuSecretDraft, saveFeishuWebhook])
 
-  const runFix = useMutation({
-    mutationFn: () => api.runLimitLadderFix(),
-    onSuccess: (data) => {
-      toast(data.msg, data.ok ? 'success' : 'error')
-      // 修正后连板梯队数据变了, 刷新相关缓存
-      qc.invalidateQueries({ queryKey: ['limit-ladder'] })
-    },
-    onError: () => toast('修正请求失败', 'error'),
-  })
-
   useEffect(() => {
     setIntervalDraft(interval)
   }, [interval])
@@ -166,21 +145,6 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
     return () => window.clearTimeout(t)
   }, [intervalDraft, interval, updateInterval])
 
-  // highlight=depth-fix 时闪烁高亮连板梯队修正卡片
-  const [flash, setFlash] = useState(false)
-  const flashedRef = useRef(false)
-  useEffect(() => {
-    if (highlight === 'depth-fix' && !flashedRef.current) {
-      flashedRef.current = true
-      // 延迟一帧确保 DOM 已渲染, 再触发闪烁
-      requestAnimationFrame(() => {
-        setFlash(true)
-        const t = setTimeout(() => setFlash(false), 2000)
-        return () => clearTimeout(t)
-      })
-    }
-  }, [highlight])
-
   if (isNoneTier) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
@@ -190,7 +154,7 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
         </div>
         <h2 className="text-lg font-medium text-foreground mb-2">实时监控</h2>
         <p className="text-sm text-secondary max-w-md mb-6">
-          实时行情需要 Free 及以上档位。None 档可使用 free-api 获取历史日K（当日数据需盘后1-2小时），但不能调用付费服务器实时接口。
+          实时行情需要 Free 及以上档位。None 档可使用 free-api 获取历史日K（当日数据需美股收盘后 1-2 小时，美东 16:00），但不能调用付费服务器实时接口。
         </p>
         <a
           href="/settings?tab=account"
@@ -332,53 +296,6 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
 
       {/* ========== 右列 ========== */}
       <div className="space-y-6">
-        {/* 连板梯队降级修正 (移至右列顶部) */}
-        <div
-          id="depth-fix"
-          className={`rounded-card transition-all duration-500 ${flash ? 'ring-2 ring-accent/60 ring-offset-2 ring-offset-base scale-[1.01]' : 'ring-0 ring-transparent'}`}
-        >
-        <Card
-          icon={Flame}
-          title="连板梯队降级修正"
-          badge={!hasDepth ? '需 Pro+' : undefined}
-          right={hasDepth ? (
-            <button
-              onClick={() => runFix.mutate()}
-              disabled={runFix.isPending}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px]
-                         bg-accent/15 text-accent hover:bg-accent/25 transition-colors
-                         disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Zap className="h-3 w-3" />
-              {runFix.isPending ? '修正中…' : '立即修正'}
-            </button>
-          ) : undefined}
-        >
-          {hasDepth ? (
-            <>
-              <p className="text-xs text-secondary mb-4">
-                通过五档盘口实时修正真假涨停/跌停。真封板显示封单量,假涨停(收盘价=涨停价但卖一有量)归入炸板。
-                盘中按设定间隔轮询,收盘后自动定版。
-              </p>
-              <ToggleRow
-                label="启用真假板修正"
-                desc="开启后盘中自动拉取五档盘口修正真假板"
-                checked={limitLadderMonitor}
-                onChange={toggleLimitLadderMonitor}
-              />
-              <div className="mt-4 pt-3 border-t border-border">
-                <div className="text-[10px] uppercase tracking-widest text-muted mb-3">
-                  五档盘口配置
-                </div>
-                <DepthConfigContent disabled={!limitLadderMonitor} />
-              </div>
-            </>
-          ) : (
-            <DepthConfigContent disabled />
-          )}
-        </Card>
-        </div>
-
         {/* 推送通知 — 监控告警的外部推送渠道 (全局配置)。
             飞书已实现; 微信开发中, QMT/ptrade 待定。
             每个渠道合并成一行: 勾选=新建规则默认推送, 点行展开地址配置。 */}
@@ -479,8 +396,8 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
             {/* 占位渠道 — 不可点 */}
             {[
               { name: '微信', hint: '公众号/企业微信', status: '开发中' },
-              { name: 'QMT', hint: '量化交易终端', status: '待定' },
-              { name: 'ptrade', hint: '量化交易终端', status: '待定' },
+              { name: 'Telegram', hint: '机器人推送', status: '待定' },
+              { name: 'Discord', hint: 'Webhook', status: '待定' },
             ].map(ch => (
               <div
                 key={ch.name}

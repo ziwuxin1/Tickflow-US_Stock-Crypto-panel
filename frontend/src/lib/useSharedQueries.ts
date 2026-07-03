@@ -37,7 +37,7 @@ export function usePreferences() {
 /** 行情状态 — SSE quotes_updated 自动刷新。
 
  * poll=true 时启用条件轮询兜底: 仅在非交易时段每 60s 轮询一次,
- * 用于在交易时段边界 (11:30午休 / 12:55开盘 / 15:05收盘) 同步 is_trading_hours。
+ * 用于在交易时段边界 (美东 09:30 开盘 / 16:00 收盘; 加密 24/7) 同步 is_trading_hours。
  * 交易时段不轮询 (SSE 已驱动刷新), 非交易时段无 SSE 推送, 需要兜底。
  * 只应在全局唯一挂载处 (Layout) 传 poll=true, 避免多页面重复轮询;
  * 其他调用方共享同一 queryKey 缓存, 无需自行轮询。

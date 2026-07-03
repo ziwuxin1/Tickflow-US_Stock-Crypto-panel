@@ -1,5 +1,5 @@
 ; ===========================================================================
-; TickFlow Stock Panel — Inno Setup 安装包脚本
+; 美股加密量化面板 (TickFlow US-Stock & Crypto Panel) — Inno Setup 安装包脚本
 ; ===========================================================================
 ; 用途: 把 PyInstaller 产出的 dist/TickFlowStockPanel/ 文件夹封装成
 ;       单个 Setup.exe 安装程序 (双击→安装向导→快捷方式→可卸载)。
@@ -18,8 +18,8 @@
 ;   - 卸载入口 (控制面板可见)
 ; ===========================================================================
 
-#define MyAppName          "TickFlow 股票面板"
-#define MyAppNameEN       "TickFlow Stock Panel"
+#define MyAppName          "美股加密量化面板"
+#define MyAppNameEN       "TickFlow US-Stock & Crypto Panel"
 #define MyAppExeName      "TickFlowStockPanel.exe"
 #define MyAppPublisher    "TickFlow"
 

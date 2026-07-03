@@ -18,8 +18,8 @@ from typing import Any
 
 import yaml
 
-from app.config import settings
 from app import secrets_store
+from app.config import settings
 
 from .capabilities import Cap, CapabilityLimits, CapabilitySet
 
@@ -32,10 +32,14 @@ _CAPSET_CACHE_FILE = "capabilities.json"
 # v2: 拆分 depth5 → depth5(单只) + depth5.batch(批量)
 # v3: 探测补全 quote.batch(此前 tiers.yaml 声明了但 _probe_real 漏探测)
 # v5: Free 档补充付费服务器 quote.by_symbol(10rpm/5标的),用于自选股实时监控。
-_CACHE_SCHEMA_VERSION = 5
+# v6: 市场切换为美股(探测符号改 AAPL.US),旧 A 股缓存强制失效重探。
+# v7: 免费数据源叠加 —— 无条件补齐 financial(yfinance) / kline.minute.by_symbol /
+#     intraday(yfinance 美股 + Binance 加密),让免 key 也能用分时/财务;旧缓存无这些能力,
+#     锁不会开,故 bump 强制重探。
+_CACHE_SCHEMA_VERSION = 7
 
 # 探测用最小代价请求:挑流通性最好的 1 只标的试
-_PROBE_SYMBOL = "600000.SH"  # 浦发银行,长期不会退市
+_PROBE_SYMBOL = "AAPL.US"  # 苹果,流动性最好的美股之一
 
 
 def _load_tiers_yaml() -> dict[str, dict[str, dict[str, Any]]]:
@@ -62,6 +66,38 @@ def _tier_to_capset(tier_def: dict[str, dict[str, Any]]) -> CapabilitySet:
     return CapabilitySet(caps)
 
 
+# ===== 免费数据源能力叠加 =====
+# 门禁开关 = capability;数据来自免费源(yfinance 美股 / Binance 加密)。
+# 因此在 capability 层无条件补齐以下能力,前端锁自动消失,数据层按符号路由到免费源。
+# 只补齐(缺才加),不覆盖已探测到的真实 limits;不改 tier label(诚实显示实际档位)。
+_FREE_SOURCE_CAPS: dict[Cap, CapabilityLimits] = {
+    # 财务(yfinance 美股 income/balance_sheet/cashflow/info)
+    Cap.FINANCIAL: CapabilityLimits(rpm=60, batch=1),
+    # 分钟 K(yfinance 美股 1m / Binance 加密 1m),按标的拉取
+    Cap.KLINE_MINUTE_BY_SYMBOL: CapabilityLimits(rpm=60, batch=1),
+    # 分时线(同上数据源)
+    Cap.INTRADAY: CapabilityLimits(rpm=60, batch=1),
+}
+
+
+def _apply_free_source_caps(capset: CapabilitySet) -> CapabilitySet:
+    """在传入 capset 上**补齐**免费数据源能力(缺才加),返回新的 CapabilitySet。
+
+    这是「分时(Pro+ 锁)+ 财务(Expert 锁)免 key 可用」的总开关:
+    capability 一旦存在,前端锁消失,数据层再按符号路由到免费源。
+    已探测到的真实能力保留原 limits,不被覆盖(immutable:构造新 dict/set)。
+    """
+    merged = dict(capset.all())
+    added = False
+    for cap, lim in _FREE_SOURCE_CAPS.items():
+        if cap not in merged:
+            merged[cap] = lim
+            added = True
+    if added:
+        logger.info("✓ 免费数据源补充: 财务(yfinance) · 分时(yfinance+Binance)")
+    return CapabilitySet(merged)
+
+
 def _is_transient(e: Exception) -> bool:
     """是否为"可重试的瞬时错误"——网络抖动 / 限流 / 服务端 5xx。
 
@@ -78,9 +114,7 @@ def _is_transient(e: Exception) -> bool:
         return True
     # APIError 体系下,status_code 5xx/429 视为瞬时
     status = getattr(e, "status_code", None)
-    if isinstance(status, int) and (status == 429 or status >= 500):
-        return True
-    return False
+    return isinstance(status, int) and (status == 429 or status >= 500)
 
 
 def _call_with_retry(fn, attempts: int = 3, backoff: float = 0.6) -> None:
@@ -93,7 +127,7 @@ def _call_with_retry(fn, attempts: int = 3, backoff: float = 0.6) -> None:
         try:
             fn()
             return
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             last_exc = e
             # 权限/参数类错误:重试无意义,立即抛出交给 try_call 归类
             if not _is_transient(e):
@@ -117,7 +151,8 @@ def _probe_real(tiers: dict) -> tuple[CapabilitySet, list[str]]:
     返回 (capset, probe_log)。
     """
     from tickflow import TickFlow
-    from .client import _base_url, PAID_ENDPOINT
+
+    from .client import PAID_ENDPOINT, _base_url
 
     key = secrets_store.get_tickflow_key()
     # 探测专用客户端:强制走付费端点验证 key。
@@ -136,7 +171,7 @@ def _probe_real(tiers: dict) -> tuple[CapabilitySet, list[str]]:
                 subscribe=default_limits.get("subscribe"),
             )
             log.append(f"✓ {cap}")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             msg = str(e).lower()
             cls = e.__class__.__name__
             # PermissionError 类名 / HTTP 403 / 中英文权限关键词都算"明确无权限"
@@ -179,7 +214,7 @@ def _probe_real(tiers: dict) -> tuple[CapabilitySet, list[str]]:
         unis = tf.universes.list()
         if not unis:
             raise RuntimeError("no universes available")
-        first_id = unis[0]["id"] if isinstance(unis[0], dict) else getattr(unis[0], "id")
+        first_id = unis[0]["id"] if isinstance(unis[0], dict) else unis[0].id
         return tf.quotes.get_by_universes([first_id], as_dataframe=False)
 
     try_call(Cap.QUOTE_POOL, _probe_pool, defaults(Cap.QUOTE_POOL))
@@ -260,8 +295,8 @@ def detect_capabilities(force: bool = False) -> CapabilitySet:
 
     tiers = _load_tiers_yaml()
     if settings.use_free_mode:
-        # 无 key —— 归 none 档(走 free-api 服务器,仅历史日K)
-        capset = _tier_to_capset(tiers["none"])
+        # 无 key —— 归 none 档(走 free-api 服务器,仅历史日K)+ 免费源分时/财务叠加
+        capset = _apply_free_source_caps(_tier_to_capset(tiers["none"]))
         _persist(capset, "None", log=["无 API Key(无档 · free-api 服务器)"], missing=[], extras=[])
         return capset
 
@@ -272,23 +307,25 @@ def detect_capabilities(force: bool = False) -> CapabilitySet:
         classified = _classify_tier(capset, tiers)
         if classified.is_invalid:
             # 无效 key(连单只日K都拿不到):归 none 档,标记要求清除 key
-            capset = _tier_to_capset(tiers["none"])
+            capset = _apply_free_source_caps(_tier_to_capset(tiers["none"]))
             probe_log.append("⚠ Key 无效(单只日K也无法获取),判定为无档")
             _persist(capset, "None", log=probe_log, missing=[], extras=[], invalid_key=True)
             return capset
         if classified.is_free:
             # 免费有效 key:按 free 档能力持久化(日K free-api + 按标的实时)。
-            capset = _tier_to_capset(tiers["free"])
-            _persist(capset, "Free", log=probe_log + ["✓ 免费有效 key(运行时走 free-api 服务器)"], missing=[], extras=[])
+            capset = _apply_free_source_caps(_tier_to_capset(tiers["free"]))
+            _persist(capset, "Free", log=[*probe_log, "✓ 免费有效 key(运行时走 free-api 服务器)"], missing=[], extras=[])
             return capset
         # 付费档(starter+) — 探测出的能力即为真实可用
         label, missing, extras = _compute_label_and_missing(capset, tiers)
         capset = _override_limits_with_detected_tier(capset, label, tiers)
+        # 免费源叠加在 label/missing/extras 计算**之后**做,不影响判档,只补运行时能力
+        capset = _apply_free_source_caps(capset)
         _persist(capset, label, log=probe_log, missing=missing, extras=extras)
         return capset
     except Exception as e:
         logger.exception("detect_capabilities failed; using none baseline: %s", e)
-        capset = _tier_to_capset(tiers["none"])
+        capset = _apply_free_source_caps(_tier_to_capset(tiers["none"]))
         _persist(capset, "None(探测失败)", log=[f"探测失败:{e}"], missing=[], extras=[])
         return capset
 
@@ -401,7 +438,7 @@ def _override_limits_with_detected_tier(
 
 def _tier_caps_set(tiers: dict, tier_name: str) -> set[Cap]:
     """读 tiers.yaml 的某档定义,转为 Cap 集合。"""
-    return {Cap(c) for c in tiers.get(tier_name, {}).keys() if c in {x.value for x in Cap}}
+    return {Cap(c) for c in tiers.get(tier_name, {}) if c in {x.value for x in Cap}}
 
 
 def _compute_label_and_missing(
@@ -432,7 +469,6 @@ def _compute_label_and_missing(
 
     base_caps = _tier_caps_set(tiers, base)
     missing = sorted(c.value for c in (base_caps - held))
-    extras = base_caps and (held - base_caps) or set()  # extras 是超出该档的部分
 
     # 实际超出 = held 中"既不属于本档、也不属于本档下方任何档"的 cap
     # 简化:extras = held - base_caps

@@ -1,17 +1,18 @@
 <div align="center">
 
-# 📈 A股智能量化工作台
+# 📈 美股&加密智能量化工作台
 
-**自托管、零运维的 A 股「选股 + 监控 + 回测」量化工作台**
+**自托管、零运维的美股 + 加密货币「选股 + 监控 + 回测」量化工作台**
 
-**面向个人散户与量化爱好者而生**
+**面向个人投资者与量化爱好者而生**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue.svg)](https://www.python.org/)
 [![React](https://img.shields.io/badge/React-18-61dafb.svg)](https://react.dev/)
 [![Data: TickFlow](https://img.shields.io/badge/Data-TickFlow-00b386.svg)](https://tickflow.org/auth/register?ref=V3KDKGXPEA)
+[![Data: Binance](https://img.shields.io/badge/Data-Binance-f0b90b.svg)](https://data-api.binance.vision)
 [![Deploy: Docker](https://img.shields.io/badge/Deploy-Docker-2496ed.svg)](./Dockerfile)
-[![GitHub stars](https://img.shields.io/github/stars/shy3130/tickflow-stock-panel?style=social)](https://github.com/shy3130/tickflow-stock-panel/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/ziwuxin1/Tickflow-US_Stock-Crypto-panel?style=social)](https://github.com/ziwuxin1/Tickflow-US_Stock-Crypto-panel/stargazers)
 
 </div>
 
@@ -21,30 +22,27 @@
 
 </div>
 
-- 🆓 **开箱即用** — 留空 Key 即进 None 模式,历史日 K 免费体验,**无需付费**
+- 🆓 **免 key 即用** — 美股历史日 K 走 TickFlow free-api,加密行情走 Binance 公共端点全功能,**不填任何 Key 也能跑通全流程**
 - 🏠 **自托管零运维** — Docker 单容器部署,数据完全掌握在自己手里
-- 🔍 **三位一体** — 选股(20 内置策略)+ 实时监控 + 向量化回测,Polars 毫秒级扫描全 A 股
+- 🔍 **三位一体** — 选股(20 内置策略)+ 实时监控 + 向量化回测,Polars 毫秒级扫描全美股 + 全币种
 - 🤖 **AI 加持** — 一句话生成策略代码,任意 OpenAI 兼容接口均可接入(留空即关闭)
 - 🔌 **自由扩展** — 自有量化项目数据,与内置数据同台分析
-- 🇨🇳 **A 股专用** — 盘后自动AI复盘并推送至飞书等;连板梯队、涨停动量、内置ths 概念 / 行业
+- 🌐 **双市场同屏** — 美股 + 加密货币共用一套自选/选股/回测/监控;加密 7×24 全天候,盘后自动 AI 复盘并推送至飞书等
 
 
 
- 基于 [TickFlow](https://tickflow.org/auth/register?ref=V3KDKGXPEA) 数据源。**明确不做**:不对标同花顺 / 通达信,不内置「AI 荐股 / 涨停预测」。
+ 美股数据基于 [TickFlow](https://tickflow.org/auth/register?ref=V3KDKGXPEA)(universe `US_Equity`),加密数据基于 Binance 公共行情(`data-api.binance.vision`,免 key)。**明确不做**:不对标专业终端,不内置「AI 荐股 / 价格预测」。
 
-> ⚠️ 考虑到tickflow数据源没有人气/资金流向等个性化数据,我将开放自有的第三方数据以供大佬们研究使用,包括但不限于当前内置的ths概念/ths行业(后续更新在这里)
-
- 
 > 有更多稳定免费数据源推荐,或者提交建议/意见的大佬可以邮件到 415333856@qq.com,q群 109338242
 
 
-觉得有用可以点个 Star，蟹蟹 🌹
+觉得有用可以点个 Star,蟹蟹 🌹
 
 ---
 
 ## 🎯 项目定位
 
-**面向个人散户与量化爱好者的 A 股分析工作台**,聚焦「**选股 + 监控 + 回测**」三大场景,LLM能力驱动进行市场分析，掌控市场节奏；让普通投资者也能拥有一套可自定义策略的量化工具。
+**面向个人投资者与量化爱好者的美股 + 加密货币分析工作台**,聚焦「**选股 + 监控 + 回测**」三大场景,LLM 能力驱动进行市场分析,掌控市场节奏;让普通投资者也能拥有一套可自定义策略的量化工具。
 
 ---
 
@@ -66,14 +64,6 @@
   <tr>
     <td width="50%"><img src="./screenshots/backtest.png" alt="回测页"></td>
     <td width="50%"><img src="./screenshots/monitor.png" alt="监控中心"></td>
-  </tr>
-  <tr>
-    <td width="50%" align="center"><b>连板梯队 Limit Ladder</b></td>
-    <td width="50%" align="center"><b>概念分析 Concept</b></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="./screenshots/limit-ladder.png" alt="连板梯队页"></td>
-    <td width="50%"><img src="./screenshots/concept-analysis.png" alt="概念分析"></td>
   </tr>
 </table>
 
@@ -99,7 +89,7 @@
 ### 方式 A:Dev 模式(二次开发推荐)
 
 ```bash
-cp .env.example .env       # 按需填 TICKFLOW_API_KEY(留空 = None 模式)
+cp .env.example .env       # 按需填 TICKFLOW_API_KEY(留空 = None 模式;加密行情始终免 key)
 ./dev.sh                   # Windows: .\dev.ps1
 ```
 
@@ -144,7 +134,7 @@ cd frontend && pnpm install && pnpm dev   # http://localhost:3011
 git pull
 ```
 
-**整个 `data/` 目录都不纳入 git**——行情 K线、财务、自选、回测、监控记录,乃至概念/行业扩展数据,全部是程序运行时生成/拉取的用户数据,`git pull` 物理上无法影响它们。新用户首次启动时,概念/行业两份扩展数据会自动从远程接口拉取,无需任何手动操作。
+**整个 `data/` 目录都不纳入 git**——行情 K线、财务、自选、回测、监控记录等扩展数据,全部是程序运行时生成/拉取的用户数据,`git pull` 物理上无法影响它们。
 
 > ⚠️ **切勿使用以下命令"解决冲突"或"清理",它们会一次性删光 `data/` 下所有未被 git 跟踪的数据:**
 > - `git clean -fdx`(最危险,会删掉所有 `.gitignore` 忽略的文件)
@@ -155,11 +145,11 @@ git pull
 
 ### 🧭 跑起来后的第一次使用
 
-1. **设置 → 凭据与能力** → 点 **重新检测**,确认档位标签
-2. **设置** → **立即跑盘后管道**:拉日 K + 计算 enriched 表(None / Free 走 free-api,当日数据盘后 1-2 小时可用)
-3. **自选**页加标的 → **选股**页点策略卡片扫描 / 配自定义信号
+1. **设置 → 凭据与能力** → 点 **重新检测**,确认档位标签(加密数据免 key,始终可用)
+2. **设置** → **立即跑盘后管道**:拉日 K + 计算 enriched 表(美股 None / Free 走 free-api,美东收盘后 1-2 小时可用;加密按 UTC 每日结算)
+3. **自选**页加标的(美股如 `AAPL.US`,加密如 `BTCUSDT`)→ **选股**页点策略卡片扫描 / 配自定义信号
 4. **回测**页选策略 + 区间 → 看净值 / 夏普 / 交易明细(SSE 实时进度)
-5. **监控中心**配规则(策略 / 个股信号 / 价格 / 异动),盘中实时弹窗 + 持久化记录
+5. **监控中心**配规则(策略 / 个股信号 / 价格 / 异动),实时弹窗 + 持久化记录;加密标的 7×24 监控
 
 ---
 
@@ -169,11 +159,11 @@ git pull
 
 **20 个内置策略**,每个策略一个独立 Python 文件,基于 Polars 表达式向量化实现(`backend/app/strategy/builtin/`):
 
-| 类型        | 代表策略                                                 |
-| :---------- | :------------------------------------------------------- |
-| 趋势 / 形态 | 趋势突破 · 均线多头 · MA 金叉 · MACD 金叉放量 · 布林突破 |
-| 量价 / 涨停 | 量价齐升 · 高换手强势 · 连板股 · 断板反包 · 涨停动量     |
-| 反转 / 波动 | 超跌反弹 · 超卖反转 · 新低反转 · 低波动龙头 · 回踩 MA20  |
+| 类型        | 代表策略                                                     |
+| :---------- | :------------------------------------------------------------ |
+| 趋势 / 形态 | 趋势突破 · 均线多头 · MA 金叉 · MACD 金叉放量 · 唐奇安通道突破 |
+| 量价 / 动量 | 量价齐升 · 高换手强势 · 动量领涨 · 强势收盘 · 连续强势         |
+| 反转 / 波动 | 超跌反弹 · 超卖反转 · 新低反转 · 低波动龙头 · 回踩 MA20        |
 
 **扩展策略的三种方式:**
 
@@ -185,17 +175,17 @@ git pull
 
 ### 📊 指标流水线(Indicators)
 
-原生 Polars 向量化,全 A 股一次扫表落盘 enriched Parquet:
+原生 Polars 向量化,全美股 + 全币种一次扫表落盘 enriched Parquet:
 
 - **均线 / 趋势**:MA(5-60)· EMA · MACD · 动量 · 布林带
 - **震荡 / 波动**:RSI · KDJ · ATR · 年化波动率 · 振幅
-- **量能 / 涨跌停**:量比 · 量均线 · 涨停信号 · 连板数
+- **量能 / 动量**:量比 · 量均线 · 连涨天数 · 换手率(美股)
 - **原子信号**:MA / MACD 金叉死叉 · N 日新高新低 · 布林突破
-- **复权**:基于除权因子自动前复权,回测与指标口径一致
+- **复权**:美股基于除权因子自动前复权,回测与指标口径一致(加密无复权概念)
 
 ### 🧪 回测引擎(Backtest)
 
-基于 vectorbt:**三种模式**(个股 / 策略组合 / 自由信号组合),真实约束(T+1 · 手续费 · 滑点 · 止损 · 最大持仓天数),组合管理(最大持仓 · 敞口 · 等权 / 自定义仓位)。SSE 流式进度支持切页重连,输出净值曲线 · 夏普 · 最大回撤 · 胜率 · 交易明细。
+**三种模式**(个股 / 策略组合 / 自由信号组合),真实约束(次日开盘成交防未来函数 · 手续费 · 滑点 · 止损 · 最大持仓天数),组合管理(最大持仓 · 敞口 · 等权 / 自定义仓位)。美股按 252 交易日年化,加密 7×24 按 365 天年化并支持小数仓位。SSE 流式进度支持切页重连,输出净值曲线 · 夏普 · 最大回撤 · 胜率 · 交易明细。
 
 ### 📡 监控中心(Monitor)
 
@@ -209,18 +199,19 @@ git pull
 
 ### 📈 个股分析(Beta)
 
-以「行情 + 关键价位」为主体的单标的决策页:
+以「行情 + 关键价位」为主体的单标的决策页(美股 / 加密通用):
 
 - **专用日 K 图表**:主图 + 成交量 + 滑块,默认近 6 个月
 - **9 类关键价位**(纯函数实时计算,毫秒级):压力支撑 · 成交密集区 · 枢轴点 · 前高前低 · Keltner 通道 · ATR 止损 · 缺口位 · 斐波那契 · 整数关口
-- **AI 四维分析**:技术 / 基本面 / 财务 / 消息面流式生成,实战派交易员视角
+- **AI 四维分析**:技术 / 基本面 / 财务 / 消息面流式生成,实战派交易员视角(加密标的自动切换 24/7 交易员视角)
 
 ### 🧰 数据与扩展
 
-- **TickFlow 多源数据**:日 K / 分钟 K / 指数 / 财务 / 实时行情
-- **🔌 第三方接入(重点)**:Tushare 等 HTTP 定时拉取 · CSV / Excel 上传 · JSON 写入,自动 schema 发现 + 符号归一,页面可视化配置,**可与自有量化项目数据并入 DuckDB 同台分析**
-- **盘后定时管道**:APScheduler 15:30 CST 自动拉日 K + 重算 enriched + 跑监控
-- **令牌桶限流**:适配各档位 rpm / batch,批量合并 + 增量拉取
+- **TickFlow 美股数据**:日 K / 分钟 K / 财务 / 实时行情(universe `US_Equity`,含 ETF)
+- **Binance 加密数据**:USDT 现货交易对日 K / 24h 全市场实时行情,公共端点免 key
+- **🔌 第三方接入(重点)**:HTTP 定时拉取 · CSV / Excel 上传 · JSON 写入,自动 schema 发现 + 符号归一,页面可视化配置,**可与自有量化项目数据并入 DuckDB 同台分析**
+- **定时管道**:APScheduler 分市场调度 —— 美股收盘后(美东时间)自动拉日 K + 重算 enriched + 跑监控,加密每日 UTC 结算
+- **令牌桶限流**:适配 TickFlow 各档位 rpm / batch,批量合并 + 增量拉取
 
 ---
 
@@ -228,22 +219,31 @@ git pull
 
 所有配置从根目录 `.env` 读取(复制 `.env.example` 开始),也可在面板 **设置** 页修改。
 
-### 数据源:TickFlow
+### 数据源一:TickFlow(美股)
 
 ```ini
-TICKFLOW_API_KEY=              # 留空 = None 模式(历史日K免费);填 Key = 按订阅档位解锁
+TICKFLOW_API_KEY=              # 留空 = None 模式(美股历史日K免费);填 Key = 按订阅档位解锁
 ```
 
-留空即 None 模式,通过 free-api 使用历史日 K(当日数据盘后 1-2 小时可用);免费注册 Key 后进 Free 模式,开启自选股实时监控。**实时行情按档位**:
+留空即 None 模式,通过 free-api 使用美股历史日 K(美东收盘后 1-2 小时可用);免费注册 Key 后进 Free 模式,开启自选股实时监控。**实时行情按档位**:
 
 | 档位     | 实时能力                                 |
 | :------- | :--------------------------------------- |
-| Free     | 自选页前 5 个标的实时监控(最低 6 秒刷新) |
+| Free     | 自选页前 5 个美股标的实时监控(最低 6 秒刷新) |
 | Starter+ | 全市场实时行情                           |
-| Pro      | 分钟 K + 盘口                            |
+| Pro      | 分钟 K                                   |
 | Expert   | WebSocket + 财务数据                     |
 
 > 完整能力矩阵见 [tickflow.org/pricing](https://tickflow.org/pricing/),高等档位含较低档全部权益。
+
+### 数据源二:Binance(加密货币,免 key)
+
+```ini
+CRYPTO_API_BASE=https://data-api.binance.vision   # Binance 公共行情端点(api.binance.com 部分地区不可达)
+CRYPTO_UNIVERSE_SIZE=300                          # 按 24h 成交额取前 N 个 USDT 现货交易对
+```
+
+加密行情全功能免 key:历史日 K、全市场 24h 实时行情、7×24 监控与回测,开箱即用,不受 TickFlow 档位限制。
 
 ### AI(可选)
 
@@ -286,8 +286,8 @@ DATA_DIR=./data       # Parquet / DuckDB 数据存储目录
 | :----------- | :------------------------------------------------------------------------------------------------ |
 | **后端**     | FastAPI · Pydantic v2 · APScheduler · sse-starlette                                               |
 | **数据**     | Polars(计算)· DuckDB(查询)· Parquet(存储)                                                         |
-| **回测**     | vectorbt(全项目唯一 pandas 边界)                                                                  |
-| **数据源**   | [TickFlow](https://tickflow.org/auth/register?ref=V3KDKGXPEA) 官方 SDK 、其他数据源后续迭代实装   |
+| **回测**     | 纯 Polars 事件回测引擎(vectorbt 为可选遗留链路)                                                   |
+| **数据源**   | [TickFlow](https://tickflow.org/auth/register?ref=V3KDKGXPEA) 官方 SDK(美股)· Binance 公共行情(加密) |
 | **AI**(可选) | OpenAI 兼容接口(DeepSeek / 通义 / Ollama 等)                                                      |
 | **前端**     | React 18 · Vite · TypeScript · Tailwind · Tanstack Query · Lightweight Charts · ECharts · dnd-kit |
 | **部署**     | Docker 两阶段构建,前端 dist 拷进后端镜像,**单容器**                                               |
@@ -299,10 +299,11 @@ DATA_DIR=./data       # Parquet / DuckDB 数据存储目录
 | Phase  | 内容                                                               | 状态 |
 | :----- | :----------------------------------------------------------------- | :--- |
 | 0-1    | 仓库骨架 · FastAPI 壳 · 能力探测 · K 线同步与分析页                | ✅   |
-| 2-3    | Polars enriched 流水线 · Screener · vectorbt 回测(T+1/手续费/止损) | ✅   |
+| 2-3    | Polars enriched 流水线 · Screener · 回测(次日开盘成交/手续费/止损) | ✅   |
 | 4-5    | 监控引擎 · 四类监控规则 · 实时 SSE 推送 · 持久化记录               | ✅   |
 | 6      | 个股分析(专用日 K + 9 类关键价位 + AI 四维分析)                    | ✅   |
-| **v2** | Webhook 推送(QMT/掘金下单)· 板块异动 · 早晚报 · 更多扩展           | 🚧   |
+| **v2** | 美股 + 加密双市场改造 · 绿涨红跌国际配色 · Binance 免 key 数据源   | ✅   |
+| v3     | 加密分钟 K / WebSocket 实时流 · 更多扩展数据源 · 早晚报            | 🚧   |
 
 ---
 
@@ -317,11 +318,11 @@ DATA_DIR=./data       # Parquet / DuckDB 数据存储目录
 
 ## ⚠️ 免责声明
 
-本项目仅供**学习与量化研究**,**不构成任何投资建议**。回测结果不代表未来收益。A 股有风险,入市需谨慎。数据准确性以数据源 TickFlow 官方为准。
+本项目仅供**学习与量化研究**,**不构成任何投资建议**。回测结果不代表未来收益。美股与加密货币市场波动剧烈(加密资产尤甚,7×24 无涨跌幅限制),入市需谨慎。数据准确性以数据源 TickFlow / Binance 官方为准。
 
 ## 📄 License
 
-[MIT](./LICENSE) © tickflow-stock-panel contributors · 本项目依赖 [TickFlow](https://tickflow.org/auth/register?ref=V3KDKGXPEA) 提供数据服务,使用前请遵守其服务条款。
+[MIT](./LICENSE) © Tickflow-US_Stock-Crypto-panel contributors · 本项目依赖 [TickFlow](https://tickflow.org/auth/register?ref=V3KDKGXPEA) 与 Binance 公共行情提供数据服务,使用前请遵守其服务条款。
 
 ## 社区
 

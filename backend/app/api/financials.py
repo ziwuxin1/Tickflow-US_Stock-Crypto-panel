@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.services.financial_sync import get_financial_df
+from app.services.financial_sync import get_financial_df, get_financial_df_for_symbol
 from app.services.financial_analyzer import analyze_financials_stream
 from app.services import ai_reports
 from app.tickflow.capabilities import Cap
@@ -55,60 +55,45 @@ def financial_status(request: Request):
     }
 
 
+def _query_financial_table(request: Request, table: str, symbol: str | None) -> dict:
+    """通用查询: 有 symbol 时按 symbol 取(本地 parquet 空则美股走 yfinance 免费兜底);
+    无 symbol 时返回本地全表(免 key 无同步产物即空, 前端已优雅降级)。"""
+    data_dir = request.app.state.repo.store.data_dir
+    if symbol:
+        df = get_financial_df_for_symbol(data_dir, table, symbol)
+    else:
+        df = get_financial_df(data_dir, table)
+    if df.is_empty():
+        return {"data": []}
+    return {"data": df.to_dicts()}
+
+
 @router.get("/metrics")
 def get_metrics(request: Request, symbol: str | None = None):
     """查询核心财务指标。"""
-    capset = request.app.state.capabilities
-    capset.require(Cap.FINANCIAL)
-
-    df = get_financial_df(request.app.state.repo.store.data_dir, "metrics")
-    if df.is_empty():
-        return {"data": []}
-    if symbol:
-        df = df.filter(pl.col("symbol") == symbol)
-    return {"data": df.to_dicts()}
+    request.app.state.capabilities.require(Cap.FINANCIAL)
+    return _query_financial_table(request, "metrics", symbol)
 
 
 @router.get("/income")
 def get_income(request: Request, symbol: str | None = None):
     """查询利润表。"""
-    capset = request.app.state.capabilities
-    capset.require(Cap.FINANCIAL)
-
-    df = get_financial_df(request.app.state.repo.store.data_dir, "income")
-    if df.is_empty():
-        return {"data": []}
-    if symbol:
-        df = df.filter(pl.col("symbol") == symbol)
-    return {"data": df.to_dicts()}
+    request.app.state.capabilities.require(Cap.FINANCIAL)
+    return _query_financial_table(request, "income", symbol)
 
 
 @router.get("/balance-sheet")
 def get_balance_sheet(request: Request, symbol: str | None = None):
     """查询资产负债表。"""
-    capset = request.app.state.capabilities
-    capset.require(Cap.FINANCIAL)
-
-    df = get_financial_df(request.app.state.repo.store.data_dir, "balance_sheet")
-    if df.is_empty():
-        return {"data": []}
-    if symbol:
-        df = df.filter(pl.col("symbol") == symbol)
-    return {"data": df.to_dicts()}
+    request.app.state.capabilities.require(Cap.FINANCIAL)
+    return _query_financial_table(request, "balance_sheet", symbol)
 
 
 @router.get("/cash-flow")
 def get_cash_flow(request: Request, symbol: str | None = None):
     """查询现金流量表。"""
-    capset = request.app.state.capabilities
-    capset.require(Cap.FINANCIAL)
-
-    df = get_financial_df(request.app.state.repo.store.data_dir, "cash_flow")
-    if df.is_empty():
-        return {"data": []}
-    if symbol:
-        df = df.filter(pl.col("symbol") == symbol)
-    return {"data": df.to_dicts()}
+    request.app.state.capabilities.require(Cap.FINANCIAL)
+    return _query_financial_table(request, "cash_flow", symbol)
 
 
 @router.post("/sync/{table}")

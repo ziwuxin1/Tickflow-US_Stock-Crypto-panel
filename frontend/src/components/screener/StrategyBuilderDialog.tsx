@@ -86,9 +86,8 @@ META = {
     "description": "策略描述",
     "tags": ["自定义"],
     "basic_filter": {
-        "price_min": 3, "price_max": 200,
-        "market_cap_min": 10e8, "amount_min": 0.5e8,
-        "exclude_st": True, "exclude_new_days": 30,
+        "price_min": 1.0,
+        "market_cap_min": 1e8, "amount_min": 5e6,
     },
     "params": [],
     "scoring": {
@@ -320,9 +319,9 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
             {step === 1 ? (
               <>
                 <div className="space-y-2">
-                  <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="策略名称，如：强势反包"
+                  <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="策略名称，如：动量领涨"
                     className="w-full h-9 px-3 rounded-lg bg-base border-0 ring-1 ring-border/30 text-sm font-medium text-foreground placeholder:text-muted/30 focus:outline-none focus:ring-2 focus:ring-accent/30" />
-                  <input type="text" value={description} onChange={e => setDescription(e.target.value)} placeholder="一句话描述，如：筛选前日阴线下跌、今日放量阳线反包的短线强势股"
+                  <input type="text" value={description} onChange={e => setDescription(e.target.value)} placeholder="一句话描述，如：筛选 5 日动量领先且放量确认的强势标的"
                     className="w-full h-8 px-3 rounded-lg bg-base border-0 ring-1 ring-border/30 text-sm text-foreground placeholder:text-muted/30 focus:outline-none focus:ring-2 focus:ring-accent/30" />
                 </div>
                 <div>
@@ -336,7 +335,7 @@ export function StrategyBuilderDialog({ open, onClose, onSavedId, mode = 'create
                 <div>
                   <span className="text-[10px] text-muted/50 uppercase tracking-wider mb-1.5 block">策略规则</span>
                   <textarea value={rules} onChange={e => setRules(e.target.value)}
-                    placeholder="描述你的选股逻辑，AI 会自动提取参数。例如：\n前一交易日为明显阴线且跌幅不低于2%，今日阳线收盘反包前一日实体，收盘价接近或高于前一日高点，成交量较前一日放大1.2倍以上，当前 close > ma5 或 close > ma10；使用 filter_history，并优先用 Polars shift/with_columns/filter 实现。"
+                    placeholder="描述你的选股逻辑，AI 会自动提取参数。例如：\n近 5 日涨幅不低于 10%，今日涨幅不低于 3% 且创 60 日新高，成交量较 5 日均量放大 1.5 倍以上，当前 close > ma5 或 close > ma10；使用 filter_history，并优先用 Polars shift/with_columns/filter 实现。"
                     className="w-full h-28 px-3 py-2 rounded-lg bg-base border-0 ring-1 ring-border/30 text-sm text-foreground placeholder:text-muted/30 resize-none focus:outline-none focus:ring-2 focus:ring-accent/30" />
                 </div>
                 {error && <div className="text-[11px] text-danger bg-danger/10 border border-danger/20 rounded-lg px-3 py-2">{error}</div>}

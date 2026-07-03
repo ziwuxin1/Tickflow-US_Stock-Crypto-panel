@@ -280,10 +280,10 @@ def build_code_lookup(data_dir: Path) -> dict[str, str]:
 
 
 def normalize_symbol(series: pl.Series, lookup: dict[str, str] | None = None) -> pl.Series:
-    """将 symbol 列标准化为 代码.交易所 格式。
+    """将 symbol 列标准化为全局唯一格式 (美股 AAPL.US / 加密 BTCUSDT)。
 
     优先使用 instruments 维表查找 code → symbol，确保 100% 准确。
-    查不到时按规则兜底：6开头 → .SH，其余 → .SZ。
+    查不到时原样保留：加密交易对本就无后缀 (BTCUSDT)，无兜底可做。
     """
     _lookup = lookup or {}
 
@@ -291,20 +291,11 @@ def normalize_symbol(series: pl.Series, lookup: dict[str, str] | None = None) ->
         if not val:
             return val
         val = val.strip()
-        # 已经是标准格式（含 .），直接返回
+        # 已经是标准格式（含 .，如 AAPL.US），直接返回
         if "." in val:
             return val
-        # 纯6位数字代码 → 优先查维表
-        if len(val) == 6 and val.isdigit():
-            mapped = _lookup.get(val)
-            if mapped:
-                return mapped
-            # 兜底规则
-            if val.startswith(("6",)):
-                return f"{val}.SH"
-            else:
-                return f"{val}.SZ"
-        return val
+        # 纯代码 → 查维表 (AAPL → AAPL.US)；查不到原样保留 (加密交易对无后缀)
+        return _lookup.get(val.upper(), val)
 
     return series.map_elements(_fix_one, return_dtype=pl.Utf8)
 

@@ -29,7 +29,7 @@ def _index_info(repo, symbol: str) -> dict:
 
 @router.get("/list")
 def list_indices(request: Request):
-    """返回已缓存的 CN_Index 指数列表。"""
+    """返回已缓存的大盘基准列表 (美股 ETF 代理 + 核心加密)。"""
     repo = request.app.state.repo
     df = repo.get_index_instruments()
     if df.is_empty():
@@ -72,7 +72,7 @@ def search_indices(
 @router.get("/daily")
 def get_index_daily(
     request: Request,
-    symbol: str = Query(..., description="指数代码, 如 000001.SH"),
+    symbol: str = Query(..., description="基准代码, 如 SPY.US / BTCUSDT"),
     days: int = Query(120, ge=10, le=2000),
     start_date: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD, 优先于 days"),
     end_date: Optional[str] = Query(None, description="截止日期 YYYY-MM-DD, 默认今天"),
@@ -87,14 +87,25 @@ def get_index_daily(
     if not df.is_empty():
         return {"symbol": symbol, "name": info.get("name"), "index_info": info, "rows": df.to_dicts(), "source": "index_enriched"}
 
+    from app import markets
+    is_crypto = markets.is_crypto(symbol)
+
+    # 加密标的走 Binance(免 key, 不占 Cap 门槛); 美股 ETF 代理走 TickFlow(需 batch 权限)
     capset = request.app.state.capabilities
-    if not capset.has(Cap.KLINE_DAILY_BATCH):
+    if not is_crypto and not capset.has(Cap.KLINE_DAILY_BATCH):
         return {"symbol": symbol, "name": info.get("name"), "index_info": info, "rows": [], "source": "none"}
 
     try:
-        raw = kline_sync.sync_daily_batch([symbol], count=days + 150)
+        if is_crypto:
+            from app.data_providers import binance_provider
+            raw = binance_provider.fetch_crypto_daily(
+                [symbol], start - timedelta(days=30), end
+            )
+        else:
+            raw = kline_sync.sync_daily_batch([symbol], count=days + 150)
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"TickFlow fetch failed: {e}") from e
+        src = "Binance" if is_crypto else "TickFlow"
+        raise HTTPException(status_code=502, detail=f"{src} fetch failed: {e}") from e
     if raw.is_empty():
         return {"symbol": symbol, "name": info.get("name"), "index_info": info, "rows": [], "source": "none"}
 
@@ -106,7 +117,7 @@ def get_index_daily(
 @router.get("/minute")
 def get_index_minute(
     request: Request,
-    symbol: str = Query(..., description="指数代码, 如 000001.SH"),
+    symbol: str = Query(..., description="基准代码, 如 SPY.US / BTCUSDT"),
     trade_date: date | None = Query(None, alias="date", description="交易日期, 默认今天"),
 ):
     """实时读取指数分钟 K。不写入股票分钟 parquet。"""
@@ -126,7 +137,7 @@ def get_index_minute(
 
 @router.post("/sync_instruments")
 def sync_index_instruments(request: Request):
-    """同步 CN_Index 指数标的列表。"""
+    """同步大盘基准标的列表 (静态种子: SPY/QQQ/DIA/IWM + BTC/ETH)。"""
     repo = request.app.state.repo
     count = index_sync.sync_index_instruments(repo)
     return {"status": "ok", "count": count}

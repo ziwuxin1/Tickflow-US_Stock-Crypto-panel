@@ -1,12 +1,14 @@
-"""盘后管道 + 盘前维表同步。
+"""盘后管道 + 盘前维表同步 (美股 + 加密双市场)。
 
-调度:
-  09:10 盘前 — 同步个股维表 instruments (全量覆盖)
-  15:30 盘后 — 日K同步 + 增量除权因子 + enriched 计算 + 刷新视图
+调度 (美股按美东时间, 加密按 UTC):
+  美东周一~五 08:30 — 盘前同步个股维表 instruments (全量覆盖)
+  美东周一~五 17:00 — 美股盘后管道: 日K同步 + 增量除权因子 + enriched 计算 + 刷新视图
+  UTC   每天 00:10 — 加密日K结算管道 (轻量: 只拉加密日K + 增量 enriched)
 
 盘后同步策略:
   日 K: QuoteService 交易时段已实时落盘 → 有数据时跳过 batch,首次拉 1 年区间
-  除权因子: 从已有数据最新日期的下一天开始增量获取,避免重复拉取和计算
+  除权因子: 仅美股; 从已有数据最新日期的下一天开始增量获取,避免重复拉取和计算
+  加密日 K: Binance 免 key 拉取, 无除权概念
 """
 from __future__ import annotations
 
@@ -18,9 +20,11 @@ import polars as pl
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from app.indicators.pipeline import run_pipeline
 from app.config import settings
-from app.services import index_sync, instrument_sync, kline_sync, preferences as _prefs
+from app.indicators.pipeline import run_pipeline
+from app.markets import crypto_trading_date, is_crypto, us_trading_date
+from app.services import index_sync, instrument_sync, kline_sync
+from app.services import preferences as _prefs
 from app.tickflow.capabilities import Cap, CapabilitySet
 from app.tickflow.pools import DEMO_SYMBOLS, get_pool
 from app.tickflow.repository import KlineRepository
@@ -40,32 +44,45 @@ def _invalidate(table: str | None = None) -> None:
     invalidate_data_cache(table)
 
 
-def _resolve_universe(capset: CapabilitySet) -> list[str]:
-    """解析标的池 — 以 CN_Equity_A (沪深京A股 ~5522只) 为主。
+def _resolve_universe(capset: CapabilitySet, markets: list[str] | None = None) -> list[str]:
+    """解析标的池 — 美股 US_Equity + 加密 Crypto 两个池的并集。
 
-    有 batch 能力 → 直接拉 CN_Equity_A universe
-    其他用户 → 用 instruments parquet + watchlist 兜底
+    美股: 有 batch 能力 → 拉 US_Equity universe; 否则 instruments parquet + watchlist 兜底
+    加密: Binance exchangeInfo 池 (免 key), 拉取失败静默降级
     """
-    if capset.has(Cap.KLINE_DAILY_BATCH):
-        try:
-            all_a = get_pool("CN_Equity_A", refresh=True)
-            if all_a:
-                return sorted(all_a)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("CN_Equity_A pool unavailable, fallback: %s", e)
+    markets = markets or ["us", "crypto"]
+    symbols: set[str] = set()
 
-    # Free 用户兜底: instruments parquet + watchlist + demo
-    base: set[str] = set(DEMO_SYMBOLS)
-    base.update(get_pool("watchlist"))
-    d = Path(settings.data_dir)
-    inst_path = d / "instruments" / "instruments.parquet"
-    if inst_path.exists():
+    if "us" in markets:
+        us_ok = False
+        if capset.has(Cap.KLINE_DAILY_BATCH):
+            try:
+                us_pool = get_pool("US_Equity", refresh=True)
+                if us_pool:
+                    symbols.update(us_pool)
+                    us_ok = True
+            except Exception as e:
+                logger.warning("US_Equity pool unavailable, fallback: %s", e)
+        if not us_ok:
+            # Free 用户兜底: instruments parquet + watchlist + demo
+            symbols.update(DEMO_SYMBOLS)
+            symbols.update(get_pool("watchlist"))
+            d = Path(settings.data_dir)
+            inst_path = d / "instruments" / "instruments.parquet"
+            if inst_path.exists():
+                try:
+                    inst = pl.read_parquet(inst_path, columns=["symbol"])
+                    symbols.update(inst["symbol"].to_list())
+                except Exception as e:
+                    logger.warning("instruments supplement failed: %s", e)
+
+    if "crypto" in markets:
         try:
-            inst = pl.read_parquet(inst_path, columns=["symbol"])
-            base.update(inst["symbol"].to_list())
-        except Exception as e:  # noqa: BLE001
-            logger.warning("instruments supplement failed: %s", e)
-    return sorted(base)
+            symbols.update(get_pool("Crypto", refresh=True))
+        except Exception as e:
+            logger.warning("Crypto pool unavailable: %s", e)
+
+    return sorted(symbols)
 
 
 def run_instruments_sync(repo: KlineRepository) -> dict:
@@ -80,45 +97,63 @@ def run_now(
     repo: KlineRepository,
     capset: CapabilitySet,
     on_progress: ProgressCb | None = None,
+    markets: list[str] | None = None,
 ) -> dict:
     """立即执行一次盘后管道,支持进度回调。
 
+    markets: 参与本次管道的市场, 默认 ["us", "crypto"] (完整管道)。
+      - ["crypto"]: 加密轻量管道 (UTC 日结 cron 用) — 只拉加密日K + 增量 enriched,
+        跳过 instruments / 美股日K / 除权因子 / 指数ETF / 分钟K。
     跳过的 stage **不 emit**,避免前端把"无 capability"的卡片错误标记为 active/done。
     result 里带 skipped_stages 列表供前端展示。
     """
     emit = on_progress or _noop
     skipped: list[str] = []
+    markets = markets or ["us", "crypto"]
+    do_us = "us" in markets
+    do_crypto = "crypto" in markets
 
     # Step 0: 先同步个股维表, 再解析标的池 — 确保标的池基于最新 instruments
-    emit("sync_instruments", 2, "同步个股维表…")
-    inst_rows = instrument_sync.sync_instruments(repo.store.data_dir)
-    if inst_rows > 0:
-        _refresh_instruments_view(repo)
-    emit("sync_instruments", 8, f"个股维表同步完成,{inst_rows} 只标的")
-    _invalidate("instruments")
+    # 加密轻量管道跳过 (维表由美股管道 / 盘前 job 维护)
+    if do_us:
+        emit("sync_instruments", 2, "同步个股维表…")
+        inst_rows = instrument_sync.sync_instruments(repo.store.data_dir)
+        if inst_rows > 0:
+            _refresh_instruments_view(repo)
+        emit("sync_instruments", 8, f"个股维表同步完成,{inst_rows} 只标的")
+        _invalidate("instruments")
+    else:
+        skipped.append("sync_instruments")
 
     emit("resolve_universe", 9, "解析标的池…")
-    universe = _resolve_universe(capset)
-    emit("resolve_universe", 10, f"标的池规模:{len(universe)} 只")
+    universe = _resolve_universe(capset, markets)
+    stock_symbols = [s for s in universe if not is_crypto(s)]
+    crypto_symbols = [s for s in universe if is_crypto(s)]
+    emit("resolve_universe", 10,
+         f"标的池规模:{len(universe)} 只 (美股 {len(stock_symbols)} / 加密 {len(crypto_symbols)})")
 
-    # Step 1: 日 K 同步
+    # Step 1: 美股日 K 同步
     #   付费档 + 今天有数据 → 实时行情接口拉一次覆写（1请求全市场）
     #   有历史数据 → batch K-line API 补齐缺口
     #   无任何数据 → batch K-line API 拉首次 1 年
     from datetime import date as _date, timedelta as _td, datetime as _dt
-    latest_daily = repo.latest_daily_date()
-    today = _date.today()
+    # 美股增量口径: 用美股专属最新日, 避免加密(UTC 日, 可能已翻次日)污染 gap-fill 起点。
+    latest_daily = repo.latest_stock_daily_date()
+    today = us_trading_date()
     today_exists = latest_daily and latest_daily >= today
     new_daily_days = 0
     # 日K范围拉取的起点(分支3补缺口/分支4首次); 实时增量/跳过时为 None。
     # 供 Step 1.5 除权因子回溯范围对齐: 范围拉取→用日K范围, 非范围→最近N天兜底。
     daily_range_start: _date | None = None
 
-    # A 股日K拉取开关(默认开);关闭时跳过日K同步,保留已有数据
-    pull_a_share = _prefs.get_pipeline_pull_a_share()
-    if not pull_a_share:
-        emit("sync_daily", 45, "已跳过 A 股日K同步(拉取内容未勾选)")
-        logger.info("sync_daily: skipped (pipeline_pull_a_share=False)")
+    # 美股日K拉取开关(默认开);关闭时跳过日K同步,保留已有数据
+    pull_us_equity = _prefs.get_pipeline_pull_us_equity()
+    if not do_us:
+        skipped.append("sync_daily")
+        logger.info("sync_daily: skipped (crypto-only run)")
+    elif not pull_us_equity:
+        emit("sync_daily", 45, "已跳过美股日K同步(拉取内容未勾选)")
+        logger.info("sync_daily: skipped (pipeline_pull_us_equity=False)")
     elif today_exists and capset.has(Cap.QUOTE_POOL):
         # 付费档:今天有数据(QuoteService 已落盘)→ 实时行情覆写,确保最新。
         # free/none 档无 quote.pool 能力,即便今天已有数据(如从 expert 降级),
@@ -142,7 +177,7 @@ def run_now(
             emit("sync_daily", 12 + int(33 * cur / tot),
                  f"日K 批次 {cur}/{tot}", stage_pct=int(100 * cur / tot), skip_log=True)
         written_daily = kline_sync.sync_and_persist_daily_batch(
-            universe, repo, capset,
+            stock_symbols, repo, capset,
             start_date=_dt.combine(start_date, _dt.min.time()),
             end_date=_dt.combine(today, _dt.min.time()),
             on_chunk_done=_daily_chunk_progress,
@@ -162,7 +197,7 @@ def run_now(
             emit("sync_daily", 12 + int(33 * cur / tot),
                  f"日K 批次 {cur}/{tot}", stage_pct=int(100 * cur / tot), skip_log=True)
         written_daily = kline_sync.sync_and_persist_daily_batch(
-            universe, repo, capset,
+            stock_symbols, repo, capset,
             start_date=_dt.combine(start_date, _dt.min.time()),
             end_date=_dt.combine(today, _dt.min.time()),
             on_chunk_done=_daily_chunk_progress,
@@ -170,23 +205,53 @@ def run_now(
         new_daily_days = 365
         emit("sync_daily", 45, "日K 完成")
         logger.info("sync_daily: [%s ~ %s] done", start_date, today)
-    _invalidate("daily")
+    if do_us and pull_us_equity:
+        _invalidate("daily")
 
-    # Step 1.5: 同步除权因子 — 范围与日K拉取方式对齐
+    # Step 1.2: 加密日 K 同步 (Binance 免 key; UTC 日线, 周末也有数据)
+    written_crypto = 0
+    pull_crypto = _prefs.get_pipeline_pull_crypto()
+    if not do_crypto:
+        skipped.append("sync_crypto")
+    elif not pull_crypto:
+        emit("sync_crypto", 47, "已跳过加密日K同步(拉取内容未勾选)")
+        logger.info("sync_crypto: skipped (pipeline_pull_crypto=False)")
+    elif not crypto_symbols:
+        skipped.append("sync_crypto")
+        logger.info("sync_crypto: skipped (no crypto symbols in universe)")
+    else:
+        c_today = crypto_trading_date()
+        # 加密回补起点: 用加密专属最新日, 避免全库 max(date)(含美股)导致永远补不到加密历史。
+        latest_crypto = repo.latest_crypto_daily_date()
+        c_start = latest_crypto if latest_crypto else c_today - _td(days=365)
+        emit("sync_crypto", 46, f"获取加密日K [{c_start} ~ {c_today}] {len(crypto_symbols)} 个交易对…")
+        try:
+            written_crypto = kline_sync.sync_crypto_daily(
+                crypto_symbols, repo,
+                start_date=_dt.combine(c_start, _dt.min.time()),
+                end_date=_dt.combine(c_today, _dt.min.time()),
+            )
+            emit("sync_crypto", 48, f"加密日K完成,{written_crypto} 行")
+            logger.info("sync_crypto: [%s ~ %s] done, %d rows", c_start, c_today, written_crypto)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("sync_crypto failed: %s", e)
+            emit("sync_crypto", 48, f"加密日K同步失败:{e}")
+        _invalidate("daily")
+
+    # Step 1.5: 同步除权因子 (仅美股; 加密无除权概念) — 范围与日K拉取方式对齐
     #   日K范围拉取(补缺口/首次) → 除权用日K范围 [daily_range_start, now]
     #     首次会覆盖整个日K区间内的历史除权事件; 补缺口天然只增量(起点=latest_daily≈昨天)
     #   日K实时增量/跳过(分支2/分支1) → 除权兜底拉最近 30 天, 补可能遗漏的新除权
     #     (这两类分支不拉历史日K, 除权不能用日K范围, 只能兜底最近几日)
-    written_adj = 0
     affected_symbols: list[str] = []
-    if capset.has(Cap.ADJ_FACTOR):
+    if do_us and stock_symbols and capset.has(Cap.ADJ_FACTOR):
         from datetime import datetime, timedelta
         adj_end = datetime.now()
         if daily_range_start is not None:
             adj_start = datetime.combine(daily_range_start, datetime.min.time())
         else:
-            # 日K实时增量/跳过时, 除权兜底拉最近 N 天, 覆盖周末/长假/停机期间的新除权事件。
-            # 15 天: 覆盖春节/国庆最长约10天长假 + 故障恢复缓冲; sync_adj_factor 内部 merge+unique 幂等, 多拉无副作用。
+            # 日K实时增量/跳过时, 除权兜底拉最近 N 天, 覆盖周末/假期/停机期间的新除权事件。
+            # 15 天: 覆盖美股感恩节/圣诞等假期 + 故障恢复缓冲; sync_adj_factor 内部 merge+unique 幂等, 多拉无副作用。
             adj_start = adj_end - timedelta(days=15)
         adj_start_str = adj_start.strftime("%Y-%m-%d")
         adj_end_str = adj_end.strftime("%Y-%m-%d")
@@ -196,8 +261,8 @@ def run_now(
         def _adj_chunk_progress(cur: int, tot: int) -> None:
             emit("sync_adj", 50 + int(10 * cur / tot),
                  f"除权因子批次 {cur}/{tot}", stage_pct=int(100 * cur / tot), skip_log=True)
-        written_adj, affected_symbols = kline_sync.sync_adj_factor(
-            universe, repo, capset,
+        _written_adj, affected_symbols = kline_sync.sync_adj_factor(
+            stock_symbols, repo, capset,
             start_time=adj_start, end_time=adj_end,
             on_chunk_done=_adj_chunk_progress,
         )
@@ -296,7 +361,7 @@ def run_now(
     pull_index = _prefs.get_pipeline_pull_index()
     pull_etf = _prefs.get_pipeline_pull_etf()
 
-    if capset.has(Cap.KLINE_DAILY_BATCH) and (pull_index or pull_etf):
+    if do_us and capset.has(Cap.KLINE_DAILY_BATCH) and (pull_index or pull_etf):
         _types = []
         if pull_index:
             _types.append("指数")
@@ -408,7 +473,7 @@ def run_now(
     minute_on = preferences.get_minute_sync_enabled()
     minute_days = preferences.get_minute_sync_days()
     written_minute = 0
-    if minute_on and capset.has(Cap.KLINE_MINUTE_BATCH):
+    if do_us and minute_on and capset.has(Cap.KLINE_MINUTE_BATCH):
         minute_start = today - _td(days=minute_days)
         emit("sync_minute", 90, f"获取分钟K [{minute_start} ~ {today}]…")
         logger.info("sync_minute: [%s ~ %s] start", minute_start, today)
@@ -440,8 +505,10 @@ def run_now(
     _invalidate(None)  # 兜底:全清
 
     return {
+        "markets": list(markets),
         "universe_size": len(universe),
         "daily_days": new_daily_days,
+        "crypto_daily_rows": written_crypto,
         "adj_factor_symbols": len(affected_symbols),
         "enriched_days": written_enriched,
         "index_count": index_count,
@@ -514,8 +581,8 @@ def _refresh_single_view(repo: KlineRepository, name: str) -> None:
 
 
 def _resolve_minute_symbols(capset: CapabilitySet) -> list[str]:
-    """分钟 K 同步标的 — 与日K共用同一标的池。"""
-    return _resolve_universe(capset)
+    """分钟 K 同步标的 — 与美股日K共用同一标的池 (TickFlow 分钟K仅覆盖美股)。"""
+    return _resolve_universe(capset, ["us"])
 
 
 def _refresh_instruments_view(repo: KlineRepository) -> None:
@@ -720,7 +787,7 @@ def _maybe_push_review(content: str, meta: dict) -> None:
 
 
 def _register_review_job(scheduler, repo, hour: int, minute: int) -> None:
-    """注册/更新定时复盘 job(工作日 mon-fri, Asia/Shanghai)。
+    """注册/更新定时复盘 job(工作日 mon-fri, America/New_York)。
 
     供 start_scheduler(启动时) 和 settings API(改时间时) 共用。
     用 replace_existing=True, 重复注册只更新 trigger。
@@ -734,7 +801,7 @@ def _register_review_job(scheduler, repo, hour: int, minute: int) -> None:
         args=[repo],
         trigger=CronTrigger(day_of_week="mon-fri",
                             hour=hour, minute=minute,
-                            timezone="Asia/Shanghai"),
+                            timezone="America/New_York"),
         id=REVIEW_JOB_ID,
         misfire_grace_time=7200,  # 复盘非关键, 允许 2 小时内补跑
         replace_existing=True,
@@ -742,18 +809,19 @@ def _register_review_job(scheduler, repo, hour: int, minute: int) -> None:
 
 
 def start_scheduler(repo: KlineRepository, capset: CapabilitySet) -> AsyncIOScheduler:
-    """启动调度器。
+    """启动调度器 (美股按美东时间, 加密按 UTC, DST 由 zoneinfo 处理)。
 
-    工作日 09:10 — 同步个股维表
-    工作日 HH:MM — 盘后管道（时间由用户偏好决定，默认 15:30）
+    美东工作日 HH:MM — 盘前同步个股维表 (默认 08:30)
+    美东工作日 HH:MM — 美股盘后管道 (默认 17:00, 含加密日K增量)
+    UTC 每天 00:10 — 加密日K结算管道 (轻量, 周末也运行)
     """
     from app.services import preferences
     sched = preferences.get_pipeline_schedule()
     inst_sched = preferences.get_instruments_schedule()
 
-    scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
+    scheduler = AsyncIOScheduler(timezone="America/New_York")
 
-    # 盘前: 同步 instruments（时间由偏好决定）
+    # 盘前: 同步 instruments (时间由偏好决定, 美东时间)
     def _instruments_task(on_progress=None):
         emit = on_progress or _noop
         emit("sync_instruments", 0, "同步个股维表…")
@@ -765,45 +833,41 @@ def start_scheduler(repo: KlineRepository, capset: CapabilitySet) -> AsyncIOSche
         lambda: _run_tracked(_instruments_task, "instruments_sync"),
         trigger=CronTrigger(day_of_week="mon-fri",
                             hour=inst_sched["hour"], minute=inst_sched["minute"],
-                            timezone="Asia/Shanghai"),
+                            timezone="America/New_York"),
         id="pre_market_instruments",
         misfire_grace_time=1800,
         replace_existing=True,
     )
 
-    # 盘后: 日 K + enriched（时间由偏好决定）
+    # 美股盘后: 日 K + enriched (时间由偏好决定, 美东时间)
     def _pipeline_then_refresh(on_progress=None):
         # 与手动触发 (/api/pipeline/run) 对齐: 管道落盘后重建 Polars 内存缓存,
-        # 否则 live_agg 的昨日连板数等基准列会停留在旧交易日, 次日开盘连板梯队
-        # 整体少算一档 (仅手动触发或重启才会刷缓存, cron 调度路径此前漏了这步)。
+        # 否则 live_agg 的昨日连涨天数等递推基准列会停留在旧交易日, 次日盘中
+        # 增量计算整体少算一档 (仅手动触发或重启才会刷缓存, cron 调度路径此前漏了这步)。
         result = run_now(repo, capset, on_progress=on_progress)
         repo.refresh_cache()
         return result
 
     scheduler.add_job(
-        lambda: _run_tracked(_pipeline_then_refresh, "daily_pipeline"),
+        lambda: _run_tracked(_pipeline_then_refresh, "daily_pipeline_us"),
         trigger=CronTrigger(day_of_week="mon-fri",
                             hour=sched["hour"], minute=sched["minute"],
-                            timezone="Asia/Shanghai"),
-        id="daily_pipeline",
+                            timezone="America/New_York"),
+        id="daily_pipeline_us",
         misfire_grace_time=3600,
         replace_existing=True,
     )
 
-    # 盘后: 五档盘口 sealed 定版(时间由偏好决定, 默认15:02, 范围15:01~18:00)
-    depth_sched = preferences.get_depth_finalize_time()
-
-    def _depth_finalize():
-        depth_svc = getattr(_get_app_state(), "depth_service", None) if _get_app_state() else None
-        if depth_svc:
-            depth_svc.finalize()
+    # 加密日结: UTC 每天 00:10 (加密 7x24, 周末也要跑) — 轻量管道只拉加密日K + 增量 enriched
+    def _crypto_pipeline(on_progress=None):
+        result = run_now(repo, capset, on_progress=on_progress, markets=["crypto"])
+        repo.refresh_cache()
+        return result
 
     scheduler.add_job(
-        _depth_finalize,
-        trigger=CronTrigger(day_of_week="mon-fri",
-                            hour=depth_sched["hour"], minute=depth_sched["minute"],
-                            timezone="Asia/Shanghai"),
-        id="depth_finalize",
+        lambda: _run_tracked(_crypto_pipeline, "daily_pipeline_crypto"),
+        trigger=CronTrigger(day_of_week="*", hour=0, minute=10, timezone="UTC"),
+        id="daily_pipeline_crypto",
         misfire_grace_time=3600,
         replace_existing=True,
     )
@@ -811,17 +875,18 @@ def start_scheduler(repo: KlineRepository, capset: CapabilitySet) -> AsyncIOSche
     # 定时复盘 (AI 大盘复盘报告): 工作日到点自动生成并归档。
     # 默认关闭 —— 仅当用户在复盘页开启时才注册 job。
     # 复用 recap_market_once(非流式) + market_recap_reports.save_report(落盘)。
-    # quote_service / depth_service 通过 _get_app_state() 延迟取用。
+    # quote_service 通过 _get_app_state() 延迟取用。
     review_sched = preferences.get_review_schedule()
     if review_sched["enabled"]:
         _register_review_job(scheduler, repo, review_sched["hour"], review_sched["minute"])
-        logger.info("scheduled_review enabled @%02d:%02d mon-fri",
+        logger.info("scheduled_review enabled @%02d:%02d mon-fri ET",
                     review_sched["hour"], review_sched["minute"])
 
     scheduler.start()
-    logger.info("scheduler started; instruments@%02d:%02d, pipeline@%02d:%02d, depth@%02d:%02d mon-fri",
-                inst_sched["hour"], inst_sched["minute"], sched["hour"], sched["minute"],
-                depth_sched["hour"], depth_sched["minute"])
+    logger.info(
+        "scheduler started; instruments@%02d:%02d ET, us_pipeline@%02d:%02d ET mon-fri, "
+        "crypto_pipeline@00:10 UTC daily",
+        inst_sched["hour"], inst_sched["minute"], sched["hour"], sched["minute"])
     return scheduler
 
 
@@ -830,7 +895,7 @@ _app_state_ref = None
 
 
 def set_app_state(app_state) -> None:
-    """lifespan 注册 app.state 引用, 供 scheduled job 访问 depth_service 等单例。"""
+    """lifespan 注册 app.state 引用, 供 scheduled job 访问 quote_service 等单例。"""
     global _app_state_ref
     _app_state_ref = app_state
 

@@ -13,7 +13,6 @@ import { QK } from '@/lib/queryKeys'
 import { tierRank } from '@/lib/capability-labels'
 import { storage } from '@/lib/storage'
 import { fmtPct, fmtPrice, priceColorClass } from '@/lib/format'
-import { boardTag } from '@/lib/board'
 import { BUILTIN_COLUMNS } from '@/lib/watchlist-columns'
 import { SignalPicker } from '@/components/screener/SignalPicker'
 import { startBacktest, stopBacktest, tryReconnect, useBacktestTask } from '@/lib/backtestTask'
@@ -101,19 +100,18 @@ for (const c of BUILTIN_COLUMNS) {
   if (c.source.type === 'builtin') FIELD_LABEL[c.source.key] = c.label
 }
 Object.assign(FIELD_LABEL, {
-  change_pct: '涨跌幅', consecutive_limit_ups: '连板',
+  change_pct: '涨跌幅', consecutive_up_days: '连涨',
   momentum_60d: '60D动量', turnover_rate: '换手率',
   rsi_14: 'RSI14', rsi_6: 'RSI6', rsi_24: 'RSI24',
   vol_ratio_5d: '量比', vol_ratio_20d: '20日量比',
   macd_dif: 'MACD-DIF', macd_dea: 'MACD-DEA', macd_hist: 'MACD柱',
   boll_upper: '布林上轨', boll_lower: '布林下轨',
 })
-const BOARD_OPTIONS = ['沪主板', '深主板', '创业板', '科创板', '北交所']
 const BASIC_FILTER_FIELDS = [
-  { key: 'price_min', label: '最低价', unit: '元' },
-  { key: 'price_max', label: '最高价', unit: '元' },
-  { key: 'amount_min', label: '最低成交额', unit: '亿', scale: 1e8 },
-  { key: 'market_cap_min', label: '最低总市值', unit: '亿', scale: 1e8 },
+  { key: 'price_min', label: '最低价', unit: '$' },
+  { key: 'price_max', label: '最高价', unit: '$' },
+  { key: 'amount_min', label: '最低成交额', unit: 'M$', scale: 1e6 },
+  { key: 'market_cap_min', label: '最低总市值', unit: 'M$', scale: 1e6 },
   { key: 'turnover_min', label: '最低换手率', unit: '%' },
   { key: 'turnover_max', label: '最高换手率', unit: '%' },
 ]
@@ -185,9 +183,10 @@ const fmtLots = (v: number | null | undefined) => {
   return v.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
 
+// 绿涨红跌（国际惯例）
 const statValueColor = (v: number | null | undefined) => {
   if (v == null || Number.isNaN(v) || v === 0) return '#f8fafc'
-  return v > 0 ? '#f87171' : '#34d399'
+  return v > 0 ? '#34d399' : '#f87171'
 }
 
 function ExitReasonBadge({ reason }: { reason: string }) {
@@ -229,7 +228,6 @@ function fmtScore(v: number | null | undefined): string {
 
 function DailyTradeChip({ trade, side, strategyName, onClick }: { trade: StrategyBacktestTrade; side: 'buy' | 'sell'; strategyName?: string; onClick?: () => void }) {
   const isBuy = side === 'buy'
-  const tag = boardTag(trade.symbol)
   const price = isBuy ? trade.entry_price : trade.exit_price
   const amount = isBuy ? trade.entry_value : trade.exit_value
   const pnlColor = priceColorClass(trade.pnl_amount ?? trade.pnl_pct)
@@ -249,13 +247,12 @@ function DailyTradeChip({ trade, side, strategyName, onClick }: { trade: Strateg
           {isBuy ? '买' : '卖'}
         </span>
         <span className="min-w-0 flex-1 truncate text-foreground">{trade.name || trade.symbol}</span>
-        {tag && <span className={`shrink-0 rounded px-1 text-[9px] font-medium ${isBuy ? 'bg-accent/20 text-accent' : 'bg-elevated text-secondary'}`}>{tag}</span>}
       </span>
       <span className="flex items-center justify-between gap-2 text-muted">
         <span className="min-w-0 truncate">
           <span className="font-mono">{trade.symbol}</span>
           <span className="mx-1">·</span>
-          <span className="num">{fmtLots(trade.lots)}手</span>
+          <span className="num">{fmtLots(trade.lots)}股</span>
         </span>
         {isBuy ? (
           <span className="num shrink-0 text-secondary">{fmtPrice(price)}</span>
@@ -660,7 +657,7 @@ export function StrategyBacktest() {
   const [matching] = useState<'close_t' | 'open_t+1'>(saved?.matching ?? 'open_t+1')
   const [entryFill, setEntryFill] = useState<'close_t' | 'open_t+1'>(saved?.entryFill ?? saved?.matching ?? 'open_t+1')
   const [exitFill, setExitFill] = useState<'close_t' | 'open_t+1'>(saved?.exitFill ?? saved?.matching ?? 'close_t')
-  const [fees, setFees] = useState(saved?.fees ?? '2')
+  const [fees, setFees] = useState(saved?.fees ?? '')
   const [slippage, setSlippage] = useState(saved?.slippage ?? '5')
   const [maxPositions, setMaxPositions] = useState(saved?.maxPositions ?? '10')
   const [maxExposure, setMaxExposure] = useState(saved?.maxExposure ?? '100')
@@ -791,7 +788,7 @@ export function StrategyBacktest() {
       matching,
       entry_fill: entryFill,
       exit_fill: exitFill,
-      fees_pct: Number(fees) / 10000,
+      fees_pct: fees.trim() === '' ? undefined : Number(fees) / 10000,
       slippage_bps: Number(slippage),
       max_positions: Number(maxPositions),
       max_exposure_pct: Number(maxExposure) / 100,
@@ -1014,9 +1011,7 @@ export function StrategyBacktest() {
     ['buy_no_slot', '满仓未买'],
     ['buy_exposure', '仓位上限'],
     ['buy_score_filter', '评分过滤'],
-    ['buy_limit_up', '涨停未买'],
     ['buy_suspended', '停牌未买'],
-    ['sell_limit_down', '跌停阻塞'],
     ['sell_suspended', '停牌阻塞'],
     ['pending_exit', '待卖阻塞'],
   ]
@@ -1297,7 +1292,8 @@ export function StrategyBacktest() {
           </div>
           <div>
             <label className="text-xs font-medium text-secondary block mb-1.5">佣金(万分之)</label>
-            <input type="number" value={fees} onChange={e => setFees(e.target.value)} className={INPUT_CLS} />
+            <input type="number" value={fees} onChange={e => setFees(e.target.value)}
+              placeholder="留空按市场默认" className={INPUT_CLS} />
           </div>
           <div>
             <label className="text-xs font-medium text-secondary block mb-1.5">滑点(万分之)</label>
@@ -1493,7 +1489,7 @@ export function StrategyBacktest() {
               <span>日均候选 <b className="text-foreground num">{result.stats.avg_daily_candidates ?? 0}</b></span>
               <span>最佳 <b className="text-bull num">{fmtPct(result.stats.best)}</b></span>
               <span>最差 <b className="text-bear num">{fmtPct(result.stats.worst)}</b></span>
-              <span>基准(上证) <b className="text-foreground num">{fmtPct(result.stats.benchmark_return)}</b></span>
+              <span>同期基准 <b className="text-foreground num">{fmtPct(result.stats.benchmark_return)}</b></span>
             </div>
 
             {/* 累计超额曲线 (复用 StrategyNavChart) */}
@@ -1578,7 +1574,7 @@ export function StrategyBacktest() {
                   color={statValueColor(strategyReturn)} />
                 <Stat label="年化" value={pick('annual_return') != null ? fmtPct(pick('annual_return') as number) : '—'}
                   color={statValueColor(pick('annual_return') as number)} />
-                <Stat label="同期上证" value={benchmarkReturn != null ? fmtPct(benchmarkReturn) : '—'}
+                <Stat label="同期基准" value={benchmarkReturn != null ? fmtPct(benchmarkReturn) : '—'}
                   color={statValueColor(benchmarkReturn)} />
                 <Stat label="超额收益" value={excessReturn != null ? fmtPct(excessReturn) : '—'}
                   color={statValueColor(excessReturn)} />
@@ -1740,7 +1736,7 @@ export function StrategyBacktest() {
                           <th className="px-4 py-2.5 font-medium">标的</th>
                           <th className="px-4 py-2.5 font-medium">买入</th>
                           <th className="px-4 py-2.5 font-medium">卖出</th>
-                          <th className="px-4 py-2.5 font-medium text-right">仓位 / 手数</th>
+                          <th className="px-4 py-2.5 font-medium text-right">仓位 / 股数</th>
                           <th className="px-4 py-2.5 font-medium text-right">单票盈亏</th>
                           <th className="px-4 py-2.5 font-medium text-right">持仓</th>
                           <th className="px-4 py-2.5 font-medium">原因</th>
@@ -1764,7 +1760,7 @@ export function StrategyBacktest() {
                             <td className="px-4 py-2.5 text-right">
                               <div className="num text-foreground">{fmtPct(t.position_pct, 2)}</div>
                               <div className="mt-0.5 text-[11px] text-muted">
-                                <span className="num">{fmtLots(t.lots)}</span> 手
+                                <span className="num">{fmtLots(t.lots)}</span> 股
                                 <span className="ml-1 num">{fmtShares(t.shares)}</span> 股
                               </div>
                             </td>
@@ -1988,30 +1984,6 @@ export function StrategyBacktest() {
                             className={INPUT_CLS}
                           />
                         </label>
-                      )
-                    })}
-                  </div>
-                  <label className="flex items-center gap-2 text-xs text-secondary">
-                    <input
-                      type="checkbox"
-                      checked={!!basicFilter.exclude_st}
-                      onChange={e => updateBasicFilter('exclude_st', e.target.checked)}
-                    />
-                    排除 ST / 退市
-                  </label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {BOARD_OPTIONS.map(board => {
-                      const boards = Array.isArray(basicFilter.boards) ? basicFilter.boards : []
-                      const checked = boards.includes(board)
-                      return (
-                        <button
-                          key={board}
-                          type="button"
-                          onClick={() => updateBasicFilter('boards', checked ? boards.filter((b: string) => b !== board) : [...boards, board])}
-                          className={`rounded-btn border px-2.5 py-1.5 text-[11px] transition-colors ${checked ? 'border-accent/50 bg-accent/10 text-accent' : 'border-border bg-base text-muted hover:border-accent/40'}`}
-                        >
-                          {board}
-                        </button>
                       )
                     })}
                   </div>

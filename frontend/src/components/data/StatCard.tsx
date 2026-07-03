@@ -158,9 +158,9 @@ export function StatCard({
       : stats?.fields
         ? '字段 · 复权 · 技术指标'
         : title === '日 K' && stats?.trading_days
-          ? '日 · A股标的 · 日线'
+          ? '日 · 美股/加密标的 · 日线'
           : stats?.trading_days && !stats?.rows
-            ? '日 · A股标的 · 分钟级'
+            ? '日 · 美股标的 · 分钟级'
             : (() => {
                 const parts = [`行 · ${(stats?.symbols_covered ?? 0)} 只标的`]
                 if (stats?.trading_days) parts.push(`· ${stats.trading_days} 日`)
@@ -207,7 +207,7 @@ export function StatCard({
             </span>
           )}
           {active && <Loader2 className="h-3.5 w-3.5 text-accent animate-spin" />}
-          {done && !active && !skipped && <CheckCircle2 className="h-3.5 w-3.5 text-bear" />}
+          {done && !active && !skipped && <CheckCircle2 className="h-3.5 w-3.5 text-success" />}
           {skipped && !active && (
             <span className="text-[10px] text-muted bg-elevated rounded px-1.5 py-px font-medium">
               本次跳过

@@ -14,7 +14,7 @@ for (const c of BUILTIN_COLUMNS) {
 }
 // enriched 列名别名
 Object.assign(FIELD_LABEL, {
-  change_pct: '涨跌幅', consecutive_limit_ups: '连板',
+  change_pct: '涨跌幅', consecutive_up_days: '连涨',
   momentum_60d: '60D动量', turnover_rate: '换手率',
   rsi_14: 'RSI14', rsi_6: 'RSI6', rsi_24: 'RSI24',
   vol_ratio_5d: '量比', vol_ratio_20d: '20日量比',
@@ -107,9 +107,6 @@ function RangeField({ label, minVal, maxVal, onMinChange, onMaxChange, unit, ste
     </div>
   )
 }
-
-// 板块标签
-const ALL_BOARDS = ['沪主板', '深主板', '创业板', '科创板', '北交所']
 
 // 策略参数字段
 function ParamField({ def, value, onChange }: {
@@ -232,10 +229,7 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
         setDetail(d)
         setStrategyName(d.name ?? '')
         setStrategyDesc(d.description ?? '')
-        // 确保 boards 有默认值
-        const bf = { ...d.basic_filter }
-        if (!bf.boards) bf.boards = ALL_BOARDS
-        setBasicFilter(bf)
+        setBasicFilter({ ...d.basic_filter })
         setParams(d.params_defaults)
         setScoring(Object.fromEntries(Object.entries(d.scoring).map(([k, v]) => [k, Math.round((v as number) * 100)])))
         setStopLoss(d.stop_loss)
@@ -284,9 +278,7 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
       setDetail(d)
       setStrategyName(d.name ?? '')
       setStrategyDesc(d.description ?? '')
-      const bf = { ...d.basic_filter }
-      if (!bf.boards) bf.boards = ALL_BOARDS
-      setBasicFilter(bf)
+      setBasicFilter({ ...d.basic_filter })
       setParams(d.params_defaults)
       setScoring(Object.fromEntries(Object.entries(d.scoring).map(([k, v]) => [k, Math.round((v as number) * 100)])))
         setStopLoss(d.stop_loss)
@@ -381,30 +373,10 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
                         </button>
                       </div>
                       <div className={`space-y-2 transition-opacity duration-200 ${basicFilterEnabled ? '' : 'opacity-25 pointer-events-none'}`}>
-                      <RangeField label="价格" minVal={basicFilter.price_min} maxVal={basicFilter.price_max} onMinChange={v => setBF('price_min', v)} onMaxChange={v => setBF('price_max', v)} unit="元" step="1" />
-                      <RangeField label="流通市值" minVal={basicFilter.float_cap_min != null ? basicFilter.float_cap_min / 1e8 : null} maxVal={basicFilter.float_cap_max != null ? basicFilter.float_cap_max / 1e8 : null} onMinChange={v => setBF('float_cap_min', v != null ? v * 1e8 : null)} onMaxChange={v => setBF('float_cap_max', v != null ? v * 1e8 : null)} unit="亿" step="5" />
-                      <RangeField label="成交额" minVal={basicFilter.amount_min != null ? basicFilter.amount_min / 1e8 : null} maxVal={basicFilter.amount_max != null ? basicFilter.amount_max / 1e8 : null} onMinChange={v => setBF('amount_min', v != null ? v * 1e8 : null)} onMaxChange={v => setBF('amount_max', v != null ? v * 1e8 : null)} unit="亿" step="0.5" />
+                      <RangeField label="价格" minVal={basicFilter.price_min} maxVal={basicFilter.price_max} onMinChange={v => setBF('price_min', v)} onMaxChange={v => setBF('price_max', v)} unit="$" step="1" />
+                      <RangeField label="流通市值" minVal={basicFilter.float_cap_min != null ? basicFilter.float_cap_min / 1e6 : null} maxVal={basicFilter.float_cap_max != null ? basicFilter.float_cap_max / 1e6 : null} onMinChange={v => setBF('float_cap_min', v != null ? v * 1e6 : null)} onMaxChange={v => setBF('float_cap_max', v != null ? v * 1e6 : null)} unit="M$" step="5" />
+                      <RangeField label="成交额" minVal={basicFilter.amount_min != null ? basicFilter.amount_min / 1e6 : null} maxVal={basicFilter.amount_max != null ? basicFilter.amount_max / 1e6 : null} onMinChange={v => setBF('amount_min', v != null ? v * 1e6 : null)} onMaxChange={v => setBF('amount_max', v != null ? v * 1e6 : null)} unit="M$" step="0.5" />
                       <RangeField label="换手率" minVal={basicFilter.turnover_min} maxVal={basicFilter.turnover_max} onMinChange={v => setBF('turnover_min', v)} onMaxChange={v => setBF('turnover_max', v)} unit="%" step="0.5" />
-                      <div className="space-y-1.5">
-                        <div className="flex items-start gap-1.5">
-                          <span className="text-[11px] text-secondary w-16 shrink-0 text-right pt-0.5">板块</span>
-                          <div className="flex flex-wrap gap-0.5">
-                            {ALL_BOARDS.map(b => {
-                              const boards: string[] = basicFilter.boards ?? ALL_BOARDS
-                              const active = boards.includes(b)
-                              return (
-                                <button key={b} onClick={() => { const cur: string[] = basicFilter.boards ?? ALL_BOARDS; const next = active ? cur.filter(x => x !== b) : [...cur, b]; setBF('boards', next.length === 0 ? ALL_BOARDS : next) }}
-                                  className={`px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors cursor-pointer ${active ? `${color.select.border} ${color.select.bgLight} ${color.select.text}` : `border-border bg-base text-muted ${color.select.borderHover}`}`}>{b}</button>
-                              )
-                            })}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] text-secondary w-16 shrink-0 text-right">ST</span>
-                          <button onClick={() => setBF('exclude_st', !basicFilter.exclude_st)}
-                            className={`px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors cursor-pointer ${basicFilter.exclude_st ? 'border-danger/40 bg-danger/10 text-danger' : 'border-border bg-base text-muted hover:border-danger/30'}`}>{basicFilter.exclude_st ? '排除' : '包含'}</button>
-                        </div>
-                      </div>
                     </div>
                   </Section>
 

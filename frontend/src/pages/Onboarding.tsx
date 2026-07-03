@@ -40,15 +40,15 @@ const STEPS = ['欢迎', '配置 Key', '能力探测', '完成'] as const
 const BRAND = '#8B5CF6'
 
 const HIGHLIGHTS = [
-  { icon: LineChart,   title: '看板与自选', desc: '市场全景看板、涨跌分布、情绪雷达,自定义自选列表', tint: 'text-accent' },
-  { icon: ScanSearch,  title: '策略选股',   desc: '内置多套选股策略,一键扫描全市场命中标的', tint: 'text-bull' },
+  { icon: LineChart,   title: '看板与自选', desc: '美股+加密全景看板、涨跌分布、情绪雷达,自定义自选列表', tint: 'text-accent' },
+  { icon: ScanSearch,  title: '美股全市场扫描', desc: '内置多套选股策略,一键扫描 1.2 万只美股命中标的', tint: 'text-bull' },
   { icon: TrendingUp,  title: '个股分析',   desc: 'AI 四维分析个股,关键价位、技术形态一目了然', tint: 'text-warning' },
-  { icon: Flame,       title: '连板梯队',   desc: '涨停梯队、封板强度、炸板监控,情绪温度计', tint: 'text-warning' },
-  { icon: Landmark,    title: '概念行业',   desc: '概念板块、行业维度的资金流向与热度排名', tint: 'text-accent' },
-  { icon: FileText,    title: '财务分析',   desc: 'AI 解读财报,利润、资负、现金流、核心指标', tint: 'text-bear' },
+  { icon: Flame,       title: '加密 24/7 监控', desc: 'BTC/ETH 等主流币种全天候行情与信号监控', tint: 'text-warning' },
+  { icon: Landmark,    title: '双市场联动', desc: '美股与加密货币同一工作台,自选/选股/回测互通', tint: 'text-accent' },
+  { icon: FileText,    title: '财务分析',   desc: 'AI 解读财报,利润、资负、现金流、核心指标', tint: 'text-success' },
   { icon: ShieldCheck, title: '回测验证',   desc: '策略历史回测、因子分析,用数据验证逻辑', tint: 'text-accent' },
-  { icon: Radar,       title: '实时监控',   desc: '自定义条件 / 策略监控,盘中触发即推送告警', tint: 'text-bear' },
-  { icon: BellRing,    title: '本地优先',   desc: '数据本地存储,隐私可控,断网仍可查阅', tint: 'text-bull' },
+  { icon: Radar,       title: '实时监控',   desc: '自定义条件 / 策略监控,盘中触发即推送告警', tint: 'text-success' },
+  { icon: BellRing,    title: '免 Key 起步', desc: '无需 API Key 即可拉取历史日K,本地存储隐私可控', tint: 'text-bull' },
 ]
 
 export function Onboarding() {
@@ -108,7 +108,7 @@ export function Onboarding() {
             className="shrink-0"
             style={{ color: BRAND, filter: `drop-shadow(0 0 8px ${BRAND}55)` }}
           />
-          <span className="text-sm font-semibold tracking-tight">TickFlow Stock Panel</span>
+          <span className="text-sm font-semibold tracking-tight">Tickflow US-Stock & Crypto Panel</span>
         </div>
         {/* 步骤进度条 —— 胶囊式 */}
         <div className="flex items-center gap-1.5">
@@ -179,10 +179,10 @@ function WelcomeStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
       </motion.div>
 
       <h1 className="mt-6 text-3xl font-bold text-foreground tracking-tight">
-        欢迎使用 TickFlow Stock Panel
+        欢迎使用美股&加密智能量化工作台
       </h1>
       <p className="mt-3 text-sm text-secondary leading-relaxed max-w-md mx-auto">
-        一个本地化的 A 股量化分析面板 —— 行情、选股、回测、监控、财务一体化。
+        一个本地化的美股 + 加密货币量化分析面板 —— 行情、选股、回测、监控、财务一体化。
         花一分钟配置,即可开始使用。
       </p>
 
@@ -283,9 +283,9 @@ function KeyStep({ onNext, onSkip, onBack }: { onNext: () => void; onSkip: () =>
             <span className="text-xs font-medium text-foreground">不配置(默认)</span>
           </div>
           <ul className="mt-2 space-y-1 text-[11px] text-muted leading-relaxed">
-            <li>· 仅历史日K数据,无实时行情</li>
-            <li>· 数据有延迟,盘后约 1-2 小时更新当天</li>
-            <li>· 可用于策略回测、盘后分析</li>
+            <li>· 美股历史日K + 加密全功能(Binance 免 Key)</li>
+            <li>· 美股当日数据于收盘后(美东16:00)约 1-2 小时更新</li>
+            <li>· 可用于策略回测、收盘后分析</li>
           </ul>
         </div>
         {/* Free 档 —— 免费注册即可获取 */}
@@ -305,7 +305,7 @@ function KeyStep({ onNext, onSkip, onBack }: { onNext: () => void; onSkip: () =>
 
       {/* Key 已配置提示 */}
       {alreadyHasKey && !save.isPending && (
-        <div className="mt-4 flex items-start gap-2 rounded-btn border border-bear/30 bg-bear/10 px-3 py-2.5 text-xs text-bear">
+        <div className="mt-4 flex items-start gap-2 rounded-btn border border-success/30 bg-success/10 px-3 py-2.5 text-xs text-success">
           <CheckCircle2 className="h-3.5 w-3.5 mt-px shrink-0" />
           <span>
             已检测到配置好的 Key(<span className="font-mono">{settings.data?.tickflow_api_key_masked}</span>)。
@@ -330,7 +330,7 @@ function KeyStep({ onNext, onSkip, onBack }: { onNext: () => void; onSkip: () =>
           </a>
           获取。
           <span className="block mt-1.5 text-foreground/70">
-            当前数据源基于 TickFlow 基座,其他第三方数据源正在开发适配中。
+            美股数据基于 TickFlow 基座,加密货币行情来自 Binance 公共接口(免 Key)。
           </span>
         </span>
       </div>
@@ -472,7 +472,7 @@ function ResultStep({ onNext, onBack }: { onNext: () => void; onBack: () => void
                   const meta = CAP_LABELS[cap]
                   return (
                     <div key={cap} className="flex items-center gap-2 text-xs">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-bear shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
                       <span className="text-foreground">{meta?.name ?? cap}</span>
                     </div>
                   )
@@ -547,12 +547,12 @@ function FinishStep({ onNext, onBack, pending }: { onNext: () => void; onBack: (
           className="relative rounded-2xl p-5 border border-border"
           style={{ background: `linear-gradient(135deg, ${BRAND}22, transparent)` }}
         >
-          <CheckCircle2 className="h-12 w-12 text-bear" />
+          <CheckCircle2 className="h-12 w-12 text-success" />
           {/* 光晕脉冲 */}
           <motion.div
             animate={{ scale: [1, 1.4], opacity: [0.4, 0] }}
             transition={{ duration: 1.8, repeat: Infinity, ease: 'easeOut' }}
-            className="absolute inset-5 rounded-full bg-bear/30"
+            className="absolute inset-5 rounded-full bg-success/30"
           />
         </div>
       </motion.div>
@@ -577,7 +577,7 @@ function FinishStep({ onNext, onBack, pending }: { onNext: () => void; onBack: (
         <div className="min-w-0">
           <div className="text-sm font-medium text-foreground">下一步:获取行情数据</div>
           <p className="mt-1 text-xs text-secondary leading-relaxed">
-            进入面板后,看板会自动引导你拉取近 1 年全 A 股日K(约 5500 只,预计 1-3 分钟)。同步期间可浏览其他页面。
+            进入面板后,看板会自动引导你拉取近 1 年美股全市场日K与主流加密货币日K(预计 1-3 分钟)。同步期间可浏览其他页面。
           </p>
         </div>
       </motion.div>

@@ -33,7 +33,6 @@ export const QK = {
   screenerCached:       (ext?: string) => ['screener-cached', ext] as const,
   screenerKlineBatch:   (symbols: string) => ['screener-kline-batch', symbols] as const,
   marketSnapshot:       ['market-snapshot'] as const,
-  limitLadder:          (asOf?: string) => ['limit-ladder', asOf] as const,
 
   // Backtest
   backtestStatus:       ['backtest-status'] as const,
@@ -73,9 +72,6 @@ export const QK = {
 
   // AI 大盘复盘
   reviewReports:        ['review-reports'] as const,
-
-  // 概念涨幅轮动矩阵
-  rpsRotation:          (days: number) => ['rps-rotation', days] as const,
 } as const
 
 // ===== SSE 应该 invalidate 的 key 前缀列表 =====
@@ -86,6 +82,5 @@ export const SSE_INVALIDATE_PREFIXES = [
   'quote-status',
   'index-quotes',
   'overview-market',
-  'limit-ladder',
   'screener',
 ] as const

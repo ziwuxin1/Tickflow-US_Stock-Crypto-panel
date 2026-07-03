@@ -10,8 +10,6 @@
 """
 from __future__ import annotations
 
-import os
-
 from tickflow import AsyncTickFlow, TickFlow
 
 from app import secrets_store
@@ -75,8 +73,8 @@ def get_async_client() -> AsyncTickFlow:
 def get_paid_realtime_client() -> TickFlow | None:
     """实时行情专用付费服务器客户端。
 
-    none/free 的历史日K仍走 get_client() 的 free-api；实时行情全部走付费服务器。
-    Free 档如果有有效 key，也使用这里的 paid endpoint 调按标的实时接口。
+    none/free 的历史日K仍走 get_client() 的 free-api;实时行情全部走付费服务器。
+    Free 档如果有有效 key,也使用这里的 paid endpoint 调按标的实时接口。
     """
     global _paid_realtime_client
     key = secrets_store.get_tickflow_key()

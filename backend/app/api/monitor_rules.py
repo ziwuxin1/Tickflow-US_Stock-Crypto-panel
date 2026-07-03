@@ -156,7 +156,6 @@ def delete_rule(rule_id: str, request: Request):
 # ── 演示数据生成 (仅 Dev 页用) ─────────────────────────
 
 import time as _time
-from datetime import datetime, timezone
 
 
 def _demo_rule(rule_id: str, name: str, rtype: str, scope: str, symbols: list[str],
@@ -183,22 +182,22 @@ def _demo_rule(rule_id: str, name: str, rtype: str, scope: str, symbols: list[st
 
 
 _DEMO_RULES_TEMPLATE = [
-    ("个股信号 · 茅台放量突破", "signal", "symbols", ["600519.SH"],
+    ("个股信号 · 苹果放量突破", "signal", "symbols", ["AAPL.US"],
      [{"field": "signal_volume_surge", "op": "truth"},
       {"field": "signal_n_day_high", "op": "truth"}], "or", "info"),
-    ("个股信号 · 宁德金叉", "signal", "symbols", ["300750.SZ"],
+    ("个股信号 · 英伟达金叉", "signal", "symbols", ["NVDA.US"],
      [{"field": "signal_ma_golden_5_20", "op": "truth"}], "or", "info"),
-    ("价格 · 平安跌幅监控", "price", "symbols", ["000001.SZ"],
-     [{"field": "change_pct", "op": "<", "value": -0.03}], "or", "warn", "warn"),
-    ("价格 · 比亚迪RSI超卖", "price", "symbols", ["002594.SZ"],
-     [{"field": "rsi_14", "op": "<", "value": 30}], "and", "warn", "warn"),
-    ("市场异动 · 全市场涨停", "market", "all", [],
-     [{"field": "signal_limit_up", "op": "truth"}], "or", "critical", "critical"),
-    ("市场异动 · 全市场炸板", "market", "all", [],
-     [{"field": "signal_broken_limit_up", "op": "truth"}], "or", "warn", "warn"),
+    ("价格 · 特斯拉跌幅监控", "price", "symbols", ["TSLA.US"],
+     [{"field": "change_pct", "op": "<", "value": -0.03}], "or", "warn"),
+    ("价格 · 比特币RSI超卖", "price", "symbols", ["BTCUSDT"],
+     [{"field": "rsi_14", "op": "<", "value": 30}], "and", "warn"),
+    ("市场异动 · 全市场60日新高", "market", "all", [],
+     [{"field": "signal_n_day_high", "op": "truth"}], "or", "critical"),
+    ("市场异动 · 连涨3日以上", "market", "all", [],
+     [{"field": "consecutive_up_days", "op": ">=", "value": 3}], "or", "warn"),
     ("市场异动 · 跌幅超5%", "market", "all", [],
-     [{"field": "change_pct", "op": "<", "value": -0.05}], "or", "warn", "warn"),
-    ("个股信号 · 茅台跌破MA20", "signal", "symbols", ["600519.SH"],
+     [{"field": "change_pct", "op": "<", "value": -0.05}], "or", "warn"),
+    ("个股信号 · 以太坊跌破MA20", "signal", "symbols", ["ETHUSDT"],
      [{"field": "signal_ma20_breakdown", "op": "truth"}], "or", "info"),
 ]
 
@@ -215,7 +214,7 @@ def seed_demo_rules(request: Request):
     ts = int(_time.time() * 1000)
     created = []
     i = 0
-    for (name, rtype, scope, symbols, conditions, logic, severity, sev) in _DEMO_RULES_TEMPLATE:
+    for (name, rtype, scope, symbols, conditions, logic, sev) in _DEMO_RULES_TEMPLATE:
         rule_id = f"demo_{ts}_{i}"
         rule = _demo_rule(rule_id, name, rtype, scope, symbols, conditions, logic, 3600, sev)
         monitor_rules.save_one(_data_dir(request), rule)

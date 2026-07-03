@@ -1,8 +1,8 @@
-"""TickFlow Stock Panel backend."""
+"""TickFlow US-Stock & Crypto Panel backend — 美股 & 加密智能量化工作台后端。"""
 
 import sys
 
-__version__ = "0.1.68"
+__version__ = "0.2.0"
 
 # Windows 默认 stdout/stderr 编码为 GBK(cp936),TickFlow SDK 内部输出含 emoji 的
 # 指数/标的名称(如 \U0001f193)时会抛 UnicodeEncodeError,导致请求失败。

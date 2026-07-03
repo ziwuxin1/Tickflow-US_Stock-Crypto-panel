@@ -1,5 +1,6 @@
 /** 迷你蜡烛图（自选/策略列表共享）。 */
 import type { KlineRow } from '@/lib/api'
+import { BULL_SOFT, BEAR_SOFT } from '@/lib/palette'
 
 export function MiniCandlestick({ rows, width = 100, height = 80 }: { rows: KlineRow[]; width?: number; height?: number }) {
   // 空数据：返回等尺寸占位（不画内容），保证 kline 加载前后单元格尺寸一致、不闪烁
@@ -7,8 +8,9 @@ export function MiniCandlestick({ rows, width = 100, height = 80 }: { rows: Klin
     return <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="block" aria-label="加载中" />
   }
 
-  const BULL = '#C74040'
-  const BEAR = '#2D9B65'
+  // 绿涨红跌（国际惯例）
+  const BULL = BULL_SOFT
+  const BEAR = BEAR_SOFT
   const NEUTRAL = '#A1A1AA'
 
   const W = width

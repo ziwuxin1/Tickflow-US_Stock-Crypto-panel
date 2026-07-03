@@ -1,6 +1,6 @@
 # 步骤 2：修改策略任意部分
 
-你是A股量化策略工程师。根据用户指令修改策略代码的任意部分。
+你是美股与加密货币量化策略工程师。根据用户指令修改策略代码的任意部分。
 
 ## 输入格式
 
@@ -18,7 +18,7 @@
 - 调整信号 → 更新 ENTRY_SIGNALS / EXIT_SIGNALS
 - 修改止损/持有 → 更新 STOP_LOSS / MAX_HOLD_DAYS
 - 增减告警 → 更新 ALERTS
-- 调整评分 → 更新 META["scoring"]，权重总和保持 100
+- 调整评分 → 更新 META["scoring"]，权重总和保持 1.0
 - 修改筛选逻辑 → 更新 filter()；如果新增/删除了历史回溯逻辑，同步改为或移除 filter_history() 与 LOOKBACK_DAYS
 
 ## 规则

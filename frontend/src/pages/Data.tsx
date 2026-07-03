@@ -612,10 +612,10 @@ export function Data() {
             ) : (
               <div className="space-y-2">
                 <div className="flex items-center gap-1.5 text-[10px] text-muted pb-2 border-b border-border/50">
-                  <span className="text-accent/60 font-medium">盘前</span>
+                  <span className="text-accent/60 font-medium">盘前(美东)</span>
                   <span>个股维表</span>
                   <span className="text-border">→</span>
-                  <span className="text-accent/60 font-medium">盘后</span>
+                  <span className="text-accent/60 font-medium">收盘后(美东)</span>
                   {pipelineSteps.map((step, i) => (
                     <span key={step} className="contents">
                       {i > 0 && <span className="text-border">→</span>}
@@ -625,11 +625,11 @@ export function Data() {
                 </div>
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="text-muted">时区</span>
-                  <span className="font-mono text-secondary">Asia/Shanghai</span>
+                  <span className="font-mono text-secondary">America/New_York · 加密 UTC</span>
                 </div>
                 <div className="flex items-center justify-between text-[11px]">
                   <div className="flex items-center gap-1">
-                    <span className="text-muted">盘前 · 个股维表</span>
+                    <span className="text-muted">盘前 · 标的维表</span>
                     <span className="text-muted/50">·</span>
                     <span className="font-mono text-secondary">
                       {`${String(instrumentsSched.hour).padStart(2, '0')}:${String(instrumentsSched.minute).padStart(2, '0')}`}
@@ -643,7 +643,7 @@ export function Data() {
                   </div>
                   <div className="flex items-center gap-2 font-mono text-secondary">
                     {s?.last_instruments_run && (
-                      <span className={`inline-flex flex-col items-center leading-tight ${isToday(s.last_instruments_run) ? 'text-bear' : 'text-secondary/70'}`}>
+                      <span className={`inline-flex flex-col items-center leading-tight ${isToday(s.last_instruments_run) ? 'text-success' : 'text-secondary/70'}`}>
                         <span>✓ {formatScheduleDatePart(s.last_instruments_run)}</span>
                         <span>{formatScheduleTimePart(s.last_instruments_run)}</span>
                       </span>
@@ -669,14 +669,14 @@ export function Data() {
                         value={instrumentsSched}
                         onSave={(h, m) => updateInstSchedule.mutate({ hour: h, minute: m })}
                         loading={updateInstSchedule.isPending}
-                        hint="不晚于 09:15"
+                        hint="不晚于美东 09:15"
                       />
                     </motion.div>
                   )}
                 </AnimatePresence>
                 <div className="flex items-center justify-between text-[11px]">
                   <div className="flex items-center gap-1">
-                    <span className="text-muted">盘后 · 全量管道</span>
+                    <span className="text-muted">收盘后 · 全量管道</span>
                     <span className="text-muted/50">·</span>
                     <span className="font-mono text-secondary">
                       {`${String(pipelineSched.hour).padStart(2, '0')}:${String(pipelineSched.minute).padStart(2, '0')}`}
@@ -690,7 +690,7 @@ export function Data() {
                   </div>
                   <div className="flex items-center gap-2 font-mono text-secondary">
                     {s?.last_pipeline_run && (
-                      <span className={`inline-flex flex-col items-center leading-tight ${isToday(s.last_pipeline_run) ? 'text-bear' : 'text-secondary/70'}`}>
+                      <span className={`inline-flex flex-col items-center leading-tight ${isToday(s.last_pipeline_run) ? 'text-success' : 'text-secondary/70'}`}>
                         <span>✓ {formatScheduleDatePart(s.last_pipeline_run)}</span>
                         <span>{formatScheduleTimePart(s.last_pipeline_run)}</span>
                       </span>
@@ -716,7 +716,7 @@ export function Data() {
                         value={pipelineSched}
                         onSave={(h, m) => updateSchedule.mutate({ hour: h, minute: m })}
                         loading={updateSchedule.isPending}
-                        hint="不早于 15:00"
+                        hint="建议美东 16:00 之后"
                       />
                     </motion.div>
                   )}
@@ -887,7 +887,7 @@ export function Data() {
 
       <AnimatePresence>
         {openSettings === 'pipeline-scope' && (
-          <SettingsModal title="盘后管道 · 拉取内容" onClose={() => setOpenSettings(null)}>
+          <SettingsModal title="每日管道 · 拉取内容" onClose={() => setOpenSettings(null)}>
             <PipelineScopeConfig />
           </SettingsModal>
         )}

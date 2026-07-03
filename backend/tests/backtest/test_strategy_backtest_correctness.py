@@ -83,8 +83,6 @@ def test_basic_filter_only_limits_entries_not_panel_rows():
             "close": 10.0 + i,
             "volume": 100_000,
             "amount": amount,
-            "signal_limit_up": False,
-            "signal_limit_down": False,
         })
     panel = pl.DataFrame(rows).sort(["symbol", "date"])
     engine = _EngineStub(panel)
@@ -129,9 +127,9 @@ def test_score_normalizes_inside_strategy_candidate_universe():
 def test_full_mode_executes_every_candidate_with_strategy_rules():
     start = date(2024, 1, 1)
     panel = pl.DataFrame([
-        {"symbol": "A", "name": "A", "date": start, "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1, "amount": 1000.0, "signal_limit_up": False, "signal_limit_down": False},
-        {"symbol": "A", "name": "A", "date": start + timedelta(days=1), "open": 11.0, "high": 11.0, "low": 11.0, "close": 11.0, "volume": 1, "amount": 0.0, "signal_limit_up": False, "signal_limit_down": False},
-        {"symbol": "A", "name": "A", "date": start + timedelta(days=2), "open": 20.0, "high": 20.0, "low": 20.0, "close": 20.0, "volume": 1, "amount": 1000.0, "signal_limit_up": False, "signal_limit_down": False},
+        {"symbol": "A", "name": "A", "date": start, "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1, "amount": 1000.0},
+        {"symbol": "A", "name": "A", "date": start + timedelta(days=1), "open": 11.0, "high": 11.0, "low": 11.0, "close": 11.0, "volume": 1, "amount": 0.0},
+        {"symbol": "A", "name": "A", "date": start + timedelta(days=2), "open": 20.0, "high": 20.0, "low": 20.0, "close": 20.0, "volume": 1, "amount": 1000.0},
     ]).sort(["symbol", "date"])
 
     engine = BacktestEngine(repo=None)  # type: ignore[arg-type]

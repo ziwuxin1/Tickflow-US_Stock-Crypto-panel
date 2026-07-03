@@ -263,22 +263,8 @@ export interface MarketSnapshotRow {
   float_shares?: number | null
   market_cap?: number | null
   float_market_cap?: number | null
-  consecutive_limit_ups?: number | null
+  consecutive_up_days?: number | null
   [key: string]: any
-}
-
-export interface OverviewDimensionRankItem {
-  name: string
-  count: number
-  avg_pct: number
-  up_count: number
-  down_count: number
-  amount: number
-  leader?: {
-    symbol?: string | null
-    name?: string | null
-    change_pct?: number | null
-  } | null
 }
 
 export interface OverviewMarket {
@@ -305,7 +291,6 @@ export interface OverviewMarket {
   }
   amount: { total: number; avg: number }
   boards: { board: string; count: number; up: number; down: number; up_pct: number; amount: number }[]
-  limit: { limit_up: number; broken: number; failed: number; limit_down: number; max_boards: number; seal_rate?: number; tiers: { boards: number; count: number }[]; sealed_ready?: boolean; fake_up?: number; fake_down?: number }
   distribution: { label: string; count: number; pct: number }[]
   trend: { above_ma5: number; above_ma20: number; above_ma60: number; above_ma5_pct: number; above_ma20_pct: number; above_ma60_pct: number; new_high: number; new_low: number }
   activity: { avg_turnover: number; high_turnover: number; high_vol_ratio: number; vol_ratio: number }
@@ -315,16 +300,6 @@ export interface OverviewMarket {
   top_losers: MarketSnapshotRow[]
   turnover_leaders: MarketSnapshotRow[]
   active_leaders: MarketSnapshotRow[]
-  concept_rank: { leading: OverviewDimensionRankItem[]; lagging: OverviewDimensionRankItem[] }
-  industry_rank: { leading: OverviewDimensionRankItem[]; lagging: OverviewDimensionRankItem[] }
-}
-
-// ===== 概念涨幅轮动矩阵 =====
-// dates: 日期字符串列表(最新在最前); columns: {日期: [[概念名, 涨幅小数], ...]} 每列各自降序
-export interface RpsRotationData {
-  dates: string[]
-  columns: Record<string, [string, number][]>
-  concept_count: number
 }
 
 // ===== 大盘复盘 =====
@@ -460,46 +435,6 @@ export function genRuleId(): string {
   const ts = Date.now().toString(36)
   const rand = Math.random().toString(36).slice(2, 6)
   return `mr_${ts}_${rand}`
-}
-
-// ===== Limit Ladder =====
-export interface LimitLadderStock {
-  symbol: string
-  name?: string | null
-  close?: number | null
-  change_pct?: number | null
-  consecutive_limit_ups?: number | null
-  consecutive_limit_downs?: number | null
-  status?: 'limit_up' | 'broken' | 'failed' | 'limit_down' | 'recovery' | null
-  /** 五档 sealed: real=真封板, fake=假涨停(已归炸板), pending=待确认, null=降级/无能力 */
-  sealed_status?: 'real' | 'fake' | 'pending' | null
-  /** 封单量(买一/卖一量), 仅真封板有值 */
-  sealed_vol?: number | null
-}
-
-export interface LimitLadderTier {
-  boards: number
-  count: number
-  stocks: LimitLadderStock[]
-}
-
-export interface LimitLadderResult {
-  as_of: string
-  tiers: LimitLadderTier[]
-  /** 双方向涨跌停计数(修正后, 不论当前 direction) */
-  counts?: { up: number; down: number }
-  /** 双方向涨跌停原始计数(修正前, 供弹窗对比) */
-  counts_raw?: { up: number; down: number }
-  /** sealed 数据是否就绪(false→前端显示降级标识) */
-  sealed_ready?: boolean
-  /** sealed 数据 age(秒), null=盘后定版或无数据 */
-  sealed_age?: number | null
-  /** sealed 修正统计: real=真封板, fake=假涨停(归炸板), pending=待确认 */
-  sealed_counts?: { real: number; fake: number; pending: number }
-  /** 涨停侧 sealed 明细 */
-  sealed_counts_up?: { real: number; fake: number; pending: number }
-  /** 跌停侧 sealed 明细 */
-  sealed_counts_down?: { real: number; fake: number; pending: number }
 }
 
 // ===== Backtest =====
@@ -678,9 +613,11 @@ export interface Preferences {
   realtime_pull_stock?: boolean
   realtime_pull_etf?: boolean
   realtime_pull_index?: boolean
+  realtime_pull_crypto?: boolean
   realtime_index_mode?: 'core' | 'all'
   realtime_index_symbols?: string[]
-  pipeline_pull_a_share: boolean
+  pipeline_pull_us_equity: boolean
+  pipeline_pull_crypto: boolean
   pipeline_pull_etf: boolean
   pipeline_pull_index: boolean
   pipeline_index_symbols: string
@@ -688,9 +625,6 @@ export interface Preferences {
   instruments_schedule: { hour: number; minute: number }
   enriched_batch_size: number
   index_daily_batch_size: number
-  limit_ladder_monitor_enabled: boolean
-  depth_polling_interval: number
-  depth_finalize_time: { hour: number; minute: number }
   review_schedule: { enabled: boolean; hour: number; minute: number }
   review_push_channels: string[]
   sse_refresh_pages: Record<string, boolean>
@@ -708,7 +642,7 @@ export interface Preferences {
 
 // ===== Strategy Alert =====
 export interface StrategyAlertEvent {
-  source: 'strategy' | 'depth'
+  source: 'strategy'
   type: string
   strategy_id?: string
   symbol?: string
@@ -776,9 +710,10 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ minute_sync_enabled: enabled, minute_sync_days: days }),
     }),
-  updatePipelinePullTypes: (cfg: Partial<Pick<Preferences, 'pipeline_pull_a_share' | 'pipeline_pull_etf' | 'pipeline_pull_index'>>) =>
+  updatePipelinePullTypes: (cfg: Partial<Pick<Preferences, 'pipeline_pull_us_equity' | 'pipeline_pull_crypto' | 'pipeline_pull_etf' | 'pipeline_pull_index'>>) =>
     request<{
-      pipeline_pull_a_share: boolean
+      pipeline_pull_us_equity: boolean
+      pipeline_pull_crypto: boolean
       pipeline_pull_etf: boolean
       pipeline_pull_index: boolean
     }>('/api/settings/preferences/pipeline-pull-types', {
@@ -880,25 +815,6 @@ export const api = {
     request<{ review_push_channels: string[] }>('/api/settings/preferences/review-push', {
       method: 'PUT',
       body: JSON.stringify({ channels }),
-    }),
-  updateDepthPollingInterval: (interval: number) =>
-    request<{ depth_polling_interval: number }>('/api/settings/preferences/depth-polling-interval', {
-      method: 'PUT',
-      body: JSON.stringify({ interval }),
-    }),
-  updateLimitLadderMonitor: (enabled: boolean) =>
-    request<{ limit_ladder_monitor_enabled: boolean }>('/api/settings/preferences/limit-ladder-monitor', {
-      method: 'PUT',
-      body: JSON.stringify({ enabled }),
-    }),
-  runLimitLadderFix: () =>
-    request<{ ok: boolean; count: number; msg: string }>('/api/settings/preferences/limit-ladder-monitor/run', {
-      method: 'POST',
-    }),
-  updateDepthFinalizeTime: (hour: number, minute: number) =>
-    request<{ hour: number; minute: number }>('/api/settings/preferences/depth-finalize-time', {
-      method: 'PUT',
-      body: JSON.stringify({ hour, minute }),
     }),
   saveNavOrder: (nav_order: string[]) =>
     request<{ nav_order: string[] }>('/api/settings/preferences/nav-order', {
@@ -1102,21 +1018,6 @@ export const api = {
     request<{ as_of: string | null; rows: MarketSnapshotRow[] }>('/api/screener/market-snapshot'),
   overviewMarket: (asOf?: string) => request<OverviewMarket>(`/api/overview/market${asOf ? `?as_of=${asOf}` : ''}`),
 
-  // 概念涨幅轮动矩阵: 每列(日期)各自把所有概念按当天涨幅从高到低排序
-  rpsRotation: (days: number) =>
-    request<RpsRotationData>(`/api/rps/rotation?days=${days}`),
-
-  limitLadder: (asOf?: string, extColumns?: string, direction?: 'up' | 'down') => {
-    const params = new URLSearchParams()
-    if (asOf) params.set('as_of', asOf)
-    if (extColumns) params.set('ext_columns', extColumns)
-    if (direction === 'down') params.set('direction', 'down')
-    const qs = params.toString()
-    return request<LimitLadderResult>(
-      `/api/screener/limit-ladder${qs ? `?${qs}` : ''}`,
-    )
-  },
-
   backtestStatus: () => request<{ available: boolean }>('/api/backtest/status'),
 
   backtestRun: (payload: {
@@ -1304,13 +1205,6 @@ export const api = {
   extDataPullRun: (id: string) =>
     request<{ status: string; rows: number; date: string }>(
       `/api/ext-data/${id}/pull/run`,
-      { method: 'POST' },
-    ),
-
-  // 内置预设 (概念/行业) 手动获取数据: 走结构转换, 保证 schema 一致
-  extDataPresetFetch: (id: string) =>
-    request<{ status: string; rows: number }>(
-      `/api/ext-data/presets/${id}/fetch`,
       { method: 'POST' },
     ),
 

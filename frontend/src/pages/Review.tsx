@@ -19,6 +19,7 @@ import { api, type OverviewMarket, type AiReviewReport } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { cn } from '@/lib/cn'
 import { fmtBigNum } from '@/lib/format'
+import { scoreColor as paletteScoreColor } from '@/lib/palette'
 import { PageHeader } from '@/components/PageHeader'
 import { MarkdownRenderer } from '@/components/financials/MarkdownRenderer'
 import { toast } from '@/components/Toast'
@@ -43,14 +44,10 @@ function pctClass(v: number | null | undefined): string {
   if (v == null || Number.isNaN(v) || v === 0) return 'text-muted'
   return v > 0 ? 'text-bull' : 'text-bear'
 }
-// A 股惯例: 强势=红, 弱式=绿(对齐 Dashboard scoreColor)
+// 国际惯例: 强势=绿, 弱势=红(对齐 Dashboard scoreColor, 色值收敛到 lib/palette)
 function scoreColor(v: number | null | undefined): string {
   if (v == null || Number.isNaN(v)) return '#71717A'
-  if (v >= 70) return '#F04438'
-  if (v >= 55) return '#FB923C'
-  if (v >= 45) return '#F59E0B'
-  if (v >= 30) return '#84CC16'
-  return '#12B76A'
+  return paletteScoreColor(v)
 }
 
 // 归档时刻格式化:ISO → "MM-DD HH:mm"(用于历史列表显示复盘时间)
@@ -102,7 +99,7 @@ export function Review() {
   // ===== 定时复盘 =====
   const [showSchedule, setShowSchedule] = useState(false)
   const prefs = usePreferences()
-  const reviewSched = prefs.data?.review_schedule ?? { enabled: false, hour: 15, minute: 10 }
+  const reviewSched = prefs.data?.review_schedule ?? { enabled: false, hour: 17, minute: 15 }
   const feishuConfigured = !!(prefs.data?.feishu_webhook_url)
   // 推送渠道是独立的顶层偏好(多选), 与定时 / 实时行情无关, 常驻可单独设置
   // []=不推送, ['feishu']=飞书(微信开发中, 仅占位)
@@ -411,7 +408,7 @@ export function Review() {
                     onChange={e => setDraft(d => ({ ...d, minute: Math.max(0, Math.min(59, Number(e.target.value))) }))}
                     className="w-12 px-1.5 py-1 rounded-btn bg-base border border-border text-xs font-mono text-foreground text-center focus:outline-none focus:border-accent/50"
                   />
-                  <span className="text-[10px] text-muted/70">不早于 15:00 · 工作日执行</span>
+                  <span className="text-[10px] text-muted/70">建议设在美股收盘后（美东16:00）· 加密按每日 UTC 结算</span>
                 </div>
               )}
 
@@ -493,28 +490,29 @@ export function Review() {
 
 // ================================================================
 // 市场摘要条 —— 复盘页的轻量上下文(非重复看板)
-// 仅一行:三大指数涨跌 · 情绪分 · 涨停结构 · 成交额
+// 仅一行:核心指数涨跌 · 情绪分 · 强势结构 · 成交额
 // 详细数据请去 Dashboard 看,这里只给 AI 报告提供背景参照
 // ================================================================
-// 指数简称映射:全称太长(上证指数/深证成指/创业板指/科创综指)摘要条放不下,统一缩成单字
+// 指数简称映射:全称太长(标普500ETF/纳指100ETF等)摘要条放不下,统一缩成短代号
 const INDEX_SHORT: Record<string, string> = {
-  '上证指数': '上', '深证成指': '深', '创业板指': '创', '科创综指': '科', '科创50': '科',
+  '标普500ETF': 'SPY', '纳指100ETF': 'QQQ', '道琼斯ETF': 'DIA', '罗素2000ETF': 'IWM',
+  '比特币': 'BTC', '以太坊': 'ETH',
 }
 function indexShort(name?: string | null, symbol?: string): string {
   if (!name) return symbol ?? '—'
-  return INDEX_SHORT[name] ?? (name.replace(/指数|成指|A股|综指|50/g, '').slice(0, 2) || name.slice(0, 1))
+  return INDEX_SHORT[name] ?? (symbol ? symbol.replace(/\.\w+$/, '').replace(/USDT$/, '') : name.slice(0, 4))
 }
 
 // 批量替换文本中的指数全称为简称(用于历史列表 summary 显示,
 // 兼容存量旧报告 —— 它们存盘时 summary 还是全称)。
-const _INDEX_FULL_RE = /上证指数|深证成指|创业板指|科创综指|科创50/g
+const _INDEX_FULL_RE = /标普500ETF|纳指100ETF|道琼斯ETF|罗素2000ETF|比特币|以太坊/g
 function shortenIndexNames(text: string): string {
   return text.replace(_INDEX_FULL_RE, (m) => INDEX_SHORT[m] ?? m)
 }
 
-// 从 summary 的指数段(如「上-2.26%、深-3.44%、创-4.07%、科-2.02%」)
+// 从 summary 的指数段(如「SPY-1.26%、QQQ-2.44%、BTC+3.07%」)
 // 解析出 [{name, pctStr, pctNum}],供列表项按涨跌染色渲染。
-const _INDEX_PCT_RE = /([上深创科])([+-]?\d+\.\d+%)/g
+const _INDEX_PCT_RE = /(SPY|QQQ|DIA|IWM|BTC|ETH)([+-]?\d+\.\d+%)/g
 function parseIndexPcts(indexSegment: string): { name: string; pctStr: string; pctNum: number }[] {
   const out: { name: string; pctStr: string; pctNum: number }[] = []
   for (const m of indexSegment.matchAll(_INDEX_PCT_RE)) {
@@ -568,11 +566,12 @@ function MarketSummaryBar({ data }: { data: OverviewMarket }) {
         <span className="font-mono font-semibold text-bear">{data.breadth?.down ?? 0}</span>
       </div>
 
-      {/* 涨停结构 */}
+      {/* 强势结构 */}
       <div className="flex items-center gap-1.5 text-[11px]">
-        <span className="text-secondary">涨停</span>
-        <span className="font-mono font-semibold text-bull">{data.limit?.limit_up ?? 0}</span>
-        <span className="text-secondary">封板 {(data.limit?.seal_rate ?? 0).toFixed(0)}%</span>
+        <span className="text-secondary">强势</span>
+        <span className="font-mono font-semibold text-bull">{data.breadth?.strong_up ?? 0}</span>
+        <span className="text-muted">/</span>
+        <span className="font-mono font-semibold text-bear">{data.breadth?.strong_down ?? 0}</span>
       </div>
 
       {/* 成交额 */}
@@ -700,7 +699,7 @@ function ReportPanel({
               <RefreshCw className="absolute -inset-1 h-13 w-13 animate-spin text-accent/30" style={{ animationDuration: '3s' }} />
             </div>
             <div className="text-sm text-foreground">AI 正在复盘今日盘面…</div>
-            <div className="text-xs text-secondary">分析指数结构 · 连板梯队 · 板块轮动 · 资金情绪</div>
+            <div className="text-xs text-secondary">分析指数结构 · 市场广度 · 美股/加密联动 · 资金情绪</div>
           </div>
         ) : (
           <div className="prose prose-invert max-w-none">
@@ -811,7 +810,7 @@ function HistoryPanel({
                   </div>
                   <button
                     onClick={(e) => { e.stopPropagation(); onDelete(r.id) }}
-                    className="shrink-0 p-1 text-muted opacity-0 transition-all hover:text-bear group-hover:opacity-100"
+                    className="shrink-0 p-1 text-muted opacity-0 transition-all hover:text-danger group-hover:opacity-100"
                     title="删除"
                   >
                     <Trash2 className="h-3.5 w-3.5" />

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useCallback, useMemo } from 'react'
 import * as echarts from 'echarts'
 import type { ECharts, EChartsOption } from 'echarts'
+import { BULL_ALPHA, BEAR_ALPHA, BULL_SOFT, BEAR_SOFT } from '@/lib/palette'
+import { fmtPrice } from '@/lib/format'
 
 export interface OHLC {
   date: string
@@ -30,7 +32,7 @@ export interface ChartMarker {
   date: string
   kind: 'buy' | 'sell' | 'neutral'
   label?: string
-  /** 若为 true，标记放在蜡烛上方（如涨停连板标签）。 */
+  /** 若为 true，标记放在蜡烛上方。 */
   above?: boolean
   /** 自定义标签颜色，覆盖默认的 kind 对应色。 */
   color?: string
@@ -87,9 +89,15 @@ function volMaN(data: OHLC[], n: number): (number | null)[] {
 
 function fmtVol(v: number | null | undefined): string {
   if (v == null) return '—'
-  if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿'
-  if (v >= 1e4) return (v / 1e4).toFixed(0) + '万'
+  if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B'
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M'
+  if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K'
   return v.toFixed(0)
+}
+
+/** 价格显示 — 精度自适应(兼容低价加密币) */
+function fp(v: number | null | undefined): string {
+  return fmtPrice(v)
 }
 
 export const SUB_CHARTS: SubChartDef[] = [
@@ -108,7 +116,7 @@ export const SUB_CHARTS: SubChartDef[] = [
           data: data.map(d => ({
             value: d.volume ?? 0,
             itemStyle: {
-              color: d.close >= d.open ? 'rgba(240,68,56,0.6)' : 'rgba(18,183,106,0.6)',
+              color: d.close >= d.open ? BULL_ALPHA : BEAR_ALPHA,
             },
           })),
           barWidth: '60%',
@@ -135,7 +143,7 @@ export const SUB_CHARTS: SubChartDef[] = [
     buildInfo: (d) => {
       if (!d) return []
       return [
-        { label: '量', color: d.close >= d.open ? '#C74040' : '#2D9B65', value: fmtVol(d.volume) },
+        { label: '量', color: d.close >= d.open ? BULL_SOFT : BEAR_SOFT, value: fmtVol(d.volume) },
       ]
     },
   },
@@ -168,7 +176,7 @@ export const SUB_CHARTS: SubChartDef[] = [
           if (v == null) return '-'
           return {
             value: Number(v),
-            itemStyle: { color: Number(v) >= 0 ? 'rgba(240,68,56,0.6)' : 'rgba(18,183,106,0.6)' },
+            itemStyle: { color: Number(v) >= 0 ? BULL_ALPHA : BEAR_ALPHA },
           }
         }),
         barWidth: '40%',
@@ -180,7 +188,7 @@ export const SUB_CHARTS: SubChartDef[] = [
       return [
         { label: 'DIF', color: '#FACC15', value: d.macd_dif != null ? d.macd_dif.toFixed(3) : '—' },
         { label: 'DEA', color: '#8B5CF6', value: d.macd_dea != null ? d.macd_dea.toFixed(3) : '—' },
-        { label: 'MACD', color: d.macd_hist != null && d.macd_hist >= 0 ? '#C74040' : '#2D9B65', value: d.macd_hist != null ? d.macd_hist.toFixed(3) : '—' },
+        { label: 'MACD', color: d.macd_hist != null && d.macd_hist >= 0 ? BULL_SOFT : BEAR_SOFT, value: d.macd_hist != null ? d.macd_hist.toFixed(3) : '—' },
       ]
     },
   },
@@ -293,11 +301,12 @@ interface Props {
   activeIndicators?: string[]
 }
 
+// 绿涨红跌（国际惯例）— 色值统一取自 lib/palette
 const THEME = {
-  bull: '#C74040',
-  bear: '#2D9B65',
-  bullAlpha: 'rgba(240,68,56,0.7)',
-  bearAlpha: 'rgba(18,183,106,0.7)',
+  bull: BULL_SOFT,
+  bear: BEAR_SOFT,
+  bullAlpha: 'rgba(18,183,106,0.7)',
+  bearAlpha: 'rgba(240,68,56,0.7)',
   ma5: '#A1A1AA',
   ma10: '#3B82F6',
   ma20: '#F97316',
@@ -308,7 +317,7 @@ const THEME = {
   bg: 'transparent',
 }
 
-/** 可见蜡烛超过此数量时，涨停/炸板标签切换为小圆点。 */
+/** 可见蜡烛超过此数量时，标记标签切换为小圆点。 */
 const COMPACT_THRESHOLD = 60
 
 /** 子图上方信息栏高度 (px) */
@@ -504,7 +513,7 @@ function buildOption(
   })
   yAxes.push({
     scale: true,
-    // 上下各留 3% 边距: 防止最高/最低点的蜡烛贴边, 涨停/炸板标签被遮挡
+    // 上下各留 3% 边距: 防止最高/最低点的蜡烛贴边, 标记标签被遮挡
     boundaryGap: [0.03, 0.03],
     splitArea: { show: false },
     axisLine: { show: false }, axisTick: { show: false },
@@ -572,7 +581,7 @@ function buildOption(
       lineStyle: { color: '#3B82F6', type: 'dashed', width: 1, opacity: 0.7 },
       label: {
         show: true,
-        formatter: linkedPrice.toFixed(2),
+        formatter: fp(linkedPrice),
         position: 'insideEndTop',
         color: '#3B82F6',
         fontSize: 10,
@@ -816,18 +825,19 @@ export function EChartsCandlestick({
     const isUp = chg >= 0
     const clr = isUp ? THEME.bull : THEME.bear
     const floatShares = stockInfo?.float_shares
-    const turnoverRate = floatShares && d.volume ? (d.volume * 100 / floatShares * 100) : null
+    // volume 单位已是股(coin), 无需手换算
+    const turnoverRate = floatShares && d.volume ? (d.volume / floatShares * 100) : null
 
     let html = `<div style="display:flex;align-items:center;gap:6px;padding:0 8px;font:11px 'JetBrains Mono',monospace;select:none;height:20px;flex-wrap:wrap">`
     html += `<span style="color:${THEME.text}">${d.date}</span>`
     html += `<span style="color:${THEME.text}">开</span>`
-    html += `<span style="color:${d.open >= d.close ? THEME.bear : THEME.bull}">${d.open.toFixed(2)}</span>`
+    html += `<span style="color:${d.open >= d.close ? THEME.bear : THEME.bull}">${fp(d.open)}</span>`
     html += `<span style="color:${THEME.text}">高</span>`
-    html += `<span style="color:${THEME.bull}">${d.high.toFixed(2)}</span>`
+    html += `<span style="color:${THEME.bull}">${fp(d.high)}</span>`
     html += `<span style="color:${THEME.text}">低</span>`
-    html += `<span style="color:${THEME.bear}">${d.low.toFixed(2)}</span>`
+    html += `<span style="color:${THEME.bear}">${fp(d.low)}</span>`
     html += `<span style="color:${THEME.text}">收</span>`
-    html += `<span style="color:${clr};font-weight:600">${d.close.toFixed(2)}</span>`
+    html += `<span style="color:${clr};font-weight:600">${fp(d.close)}</span>`
     // 涨跌幅 (收盘后, 换手前; 和收间隔一些距离)
     if (prev) {
       const chgPct = (chg / prev.close * 100)
@@ -842,12 +852,12 @@ export function EChartsCandlestick({
     // 第二行: MA + BOLL
     if (showMA) {
       html += `<div style="display:flex;align-items:center;gap:10px;padding:0 8px;font:11px 'JetBrains Mono',monospace;select:none;height:20px;flex-wrap:wrap">`
-      if (d.ma5 != null) html += `<span style="color:${THEME.ma5}">MA5:${Number(d.ma5).toFixed(2)}</span>`
-      if (d.ma10 != null) html += `<span style="color:${THEME.ma10}">MA10:${Number(d.ma10).toFixed(2)}</span>`
-      if (d.ma20 != null) html += `<span style="color:${THEME.ma20}">MA20:${Number(d.ma20).toFixed(2)}</span>`
-      if (d.ma60 != null) html += `<span style="color:${THEME.ma60}">MA60:${Number(d.ma60).toFixed(2)}</span>`
+      if (d.ma5 != null) html += `<span style="color:${THEME.ma5}">MA5:${fp(Number(d.ma5))}</span>`
+      if (d.ma10 != null) html += `<span style="color:${THEME.ma10}">MA10:${fp(Number(d.ma10))}</span>`
+      if (d.ma20 != null) html += `<span style="color:${THEME.ma20}">MA20:${fp(Number(d.ma20))}</span>`
+      if (d.ma60 != null) html += `<span style="color:${THEME.ma60}">MA60:${fp(Number(d.ma60))}</span>`
       if (d.boll_upper != null && activeIndicators.includes('boll')) {
-        html += `<span style="color:#E879F9">BOLL:${Number(d.boll_upper).toFixed(2)}/${Number(d.ma20).toFixed(2)}/${Number(d.boll_lower).toFixed(2)}</span>`
+        html += `<span style="color:#E879F9">BOLL:${fp(Number(d.boll_upper))}/${fp(Number(d.ma20))}/${fp(Number(d.boll_lower))}</span>`
       }
       html += `</div>`
     }
@@ -1046,19 +1056,20 @@ export function EChartsCandlestick({
     const d = idx >= 0 && idx < data.length ? data[idx] : null
     if (!d) return ''
     const floatShares = stockInfo?.float_shares
-    const turnoverRate = floatShares && d.volume ? (d.volume * 100 / floatShares * 100) : null
+    // volume 单位已是股(coin), 无需手换算
+    const turnoverRate = floatShares && d.volume ? (d.volume / floatShares * 100) : null
     let html = `<div style="display:flex;align-items:center;gap:6px;padding:0 8px;font:11px 'JetBrains Mono',monospace;height:20px;flex-wrap:wrap">`
     html += `<span style="color:${THEME.text}">${d.date}</span>`
     html += `<span style="color:${THEME.text}">开</span>`
-    html += `<span style="color:${d.open >= d.close ? THEME.bear : THEME.bull}">${d.open.toFixed(2)}</span>`
+    html += `<span style="color:${d.open >= d.close ? THEME.bear : THEME.bull}">${fp(d.open)}</span>`
     html += `<span style="color:${THEME.text}">高</span>`
-    html += `<span style="color:${THEME.bull}">${d.high.toFixed(2)}</span>`
+    html += `<span style="color:${THEME.bull}">${fp(d.high)}</span>`
     html += `<span style="color:${THEME.text}">低</span>`
-    html += `<span style="color:${THEME.bear}">${d.low.toFixed(2)}</span>`
+    html += `<span style="color:${THEME.bear}">${fp(d.low)}</span>`
     html += `<span style="color:${THEME.text}">收</span>`
     const prevClose0 = data[idx-1]?.close ?? d.close
     const clr0 = d.close >= prevClose0 ? THEME.bull : THEME.bear
-    html += `<span style="color:${clr0};font-weight:600">${d.close.toFixed(2)}</span>`
+    html += `<span style="color:${clr0};font-weight:600">${fp(d.close)}</span>`
     // 涨跌幅 (收盘后, 换手前; 和收间隔一些距离)
     if (idx > 0) {
       const chgPct0 = ((d.close - prevClose0) / prevClose0 * 100)
@@ -1071,12 +1082,12 @@ export function EChartsCandlestick({
     html += `</div>`
     if (showMA) {
       html += `<div style="display:flex;align-items:center;gap:10px;padding:0 8px;font:11px 'JetBrains Mono',monospace;height:20px;flex-wrap:wrap">`
-      if (d.ma5 != null) html += `<span style="color:${THEME.ma5}">MA5:${Number(d.ma5).toFixed(2)}</span>`
-      if (d.ma10 != null) html += `<span style="color:${THEME.ma10}">MA10:${Number(d.ma10).toFixed(2)}</span>`
-      if (d.ma20 != null) html += `<span style="color:${THEME.ma20}">MA20:${Number(d.ma20).toFixed(2)}</span>`
-      if (d.ma60 != null) html += `<span style="color:${THEME.ma60}">MA60:${Number(d.ma60).toFixed(2)}</span>`
+      if (d.ma5 != null) html += `<span style="color:${THEME.ma5}">MA5:${fp(Number(d.ma5))}</span>`
+      if (d.ma10 != null) html += `<span style="color:${THEME.ma10}">MA10:${fp(Number(d.ma10))}</span>`
+      if (d.ma20 != null) html += `<span style="color:${THEME.ma20}">MA20:${fp(Number(d.ma20))}</span>`
+      if (d.ma60 != null) html += `<span style="color:${THEME.ma60}">MA60:${fp(Number(d.ma60))}</span>`
       if (d.boll_upper != null && activeIndicators.includes('boll')) {
-        html += `<span style="color:#E879F9">BOLL:${Number(d.boll_upper).toFixed(2)}/${Number(d.ma20).toFixed(2)}/${Number(d.boll_lower).toFixed(2)}</span>`
+        html += `<span style="color:#E879F9">BOLL:${fp(Number(d.boll_upper))}/${fp(Number(d.ma20))}/${fp(Number(d.boll_lower))}</span>`
       }
       html += `</div>`
     }

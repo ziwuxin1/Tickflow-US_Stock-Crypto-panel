@@ -335,7 +335,8 @@ def get_preferences() -> dict:
         "realtime_data_provider": preferences.get_realtime_data_provider(),
         "realtime_watchlist_symbols": preferences.get_realtime_watchlist_symbols(),
         **preferences.get_realtime_quote_scope(),
-        "pipeline_pull_a_share": preferences.get_pipeline_pull_a_share(),
+        "pipeline_pull_us_equity": preferences.get_pipeline_pull_us_equity(),
+        "pipeline_pull_crypto": preferences.get_pipeline_pull_crypto(),
         "pipeline_pull_etf": preferences.get_pipeline_pull_etf(),
         "pipeline_pull_index": preferences.get_pipeline_pull_index(),
         "pipeline_index_symbols": preferences.get_pipeline_index_symbols(),
@@ -356,9 +357,6 @@ def get_preferences() -> dict:
         "nav_order": preferences.get_nav_order(),
         "nav_hidden": preferences.get_nav_hidden(),
         "screener_auto_run": preferences.get_screener_auto_run(),
-        "limit_ladder_monitor_enabled": preferences.get_limit_ladder_monitor_enabled(),
-        "depth_polling_interval": preferences.get_depth_polling_interval(),
-        "depth_finalize_time": preferences.get_depth_finalize_time(),
         "review_schedule": preferences.get_review_schedule(),
         "review_push_channels": preferences.get_review_push_channels(),
     }
@@ -445,6 +443,7 @@ class RealtimeQuoteScopePrefs(BaseModel):
     realtime_pull_stock: bool | None = None
     realtime_pull_etf: bool | None = None
     realtime_pull_index: bool | None = None
+    realtime_pull_crypto: bool | None = None
     realtime_index_mode: str | None = None
     realtime_index_symbols: list[str] | None = None
 
@@ -553,8 +552,9 @@ def update_realtime_monitor_config(req: RealtimeMonitorConfigIn, request: Reques
 
 
 class PipelinePullTypesIn(BaseModel):
-    """盘后管道拉取内容开关(A股 / ETF / 指数 独立控制)。"""
-    pipeline_pull_a_share: bool | None = None
+    """盘后管道拉取内容开关(美股 / 加密 / ETF / 指数 独立控制)。"""
+    pipeline_pull_us_equity: bool | None = None
+    pipeline_pull_crypto: bool | None = None
     pipeline_pull_etf: bool | None = None
     pipeline_pull_index: bool | None = None
 
@@ -874,7 +874,7 @@ class PipelineScheduleIn(BaseModel):
 
 @router.put("/preferences/pipeline-schedule")
 def update_pipeline_schedule(req: PipelineScheduleIn, request: Request) -> dict:
-    """保存盘后管道调度时间并立即 reschedule。"""
+    """保存美股盘后管道调度时间(美东时间)并立即 reschedule。"""
     from app.services import preferences
     sched = preferences.set_pipeline_schedule(req.hour, req.minute)
 
@@ -883,12 +883,12 @@ def update_pipeline_schedule(req: PipelineScheduleIn, request: Request) -> dict:
     scheduler = getattr(request.app.state, "scheduler", None)
     if scheduler:
         scheduler.reschedule_job(
-            "daily_pipeline",
+            "daily_pipeline_us",
             trigger=CronTrigger(
                 day_of_week="mon-fri",
                 hour=sched["hour"],
                 minute=sched["minute"],
-                timezone="Asia/Shanghai",
+                timezone="America/New_York",
             ),
         )
         logger.info("pipeline rescheduled to %02d:%02d mon-fri", sched["hour"], sched["minute"])
@@ -898,7 +898,7 @@ def update_pipeline_schedule(req: PipelineScheduleIn, request: Request) -> dict:
 
 @router.put("/preferences/instruments-schedule")
 def update_instruments_schedule(req: PipelineScheduleIn, request: Request) -> dict:
-    """保存盘前标的维表调度时间并立即 reschedule。"""
+    """保存盘前标的维表调度时间(美东时间)并立即 reschedule。"""
     from app.services import preferences
     sched = preferences.set_instruments_schedule(req.hour, req.minute)
 
@@ -911,10 +911,10 @@ def update_instruments_schedule(req: PipelineScheduleIn, request: Request) -> di
                 day_of_week="mon-fri",
                 hour=sched["hour"],
                 minute=sched["minute"],
-                timezone="Asia/Shanghai",
+                timezone="America/New_York",
             ),
         )
-        return sched
+    return sched
 
 
 class EnrichedBatchSizeIn(BaseModel):
@@ -941,85 +941,6 @@ def update_index_daily_batch_size(req: IndexDailyBatchSizeIn) -> dict:
     return {"index_daily_batch_size": size}
 
 
-# ── 五档盘口 sealed 配置 ──────────────────────────────
-
-class LimitLadderMonitorIn(BaseModel):
-    enabled: bool
-
-
-@router.put("/preferences/limit-ladder-monitor")
-def update_limit_ladder_monitor(req: LimitLadderMonitorIn, request: Request) -> dict:
-    """连板梯队 5 档监控开关。开启→启动 depth 轮询, 关闭→停止。"""
-    from app.services import preferences
-    preferences.save({"limit_ladder_monitor_enabled": req.enabled})
-
-    # 立即应用: 启停 depth 轮询线程
-    depth_svc = getattr(request.app.state, "depth_service", None)
-    if depth_svc:
-        depth_svc.apply_monitor_toggle(req.enabled)
-
-    return {"limit_ladder_monitor_enabled": req.enabled}
-
-
-@router.post("/preferences/limit-ladder-monitor/run")
-def run_limit_ladder_fix(request: Request) -> dict:
-    """立即手动修正一次真假板(拉取五档盘口 + 更新缓存)。需 Pro+。"""
-    from app.tickflow.capabilities import Cap
-    capset = request.app.state.capabilities
-    capset.require(Cap.DEPTH5_BATCH)  # 无能力抛 CapabilityDenied(403)
-
-    depth_svc = getattr(request.app.state, "depth_service", None)
-    if not depth_svc:
-        raise HTTPException(status_code=503, detail="depth 服务未初始化")
-    return depth_svc.run_once()
-
-
-class DepthPollingIntervalIn(BaseModel):
-    interval: float
-
-
-@router.put("/preferences/depth-polling-interval")
-def update_depth_polling_interval(req: DepthPollingIntervalIn, request: Request) -> dict:
-    """保存五档盘口盘中轮询间隔(秒)。需 Pro+。"""
-    from app.tickflow.capabilities import Cap
-    request.app.state.capabilities.require(Cap.DEPTH5_BATCH)
-
-    from app.services import preferences
-    interval = preferences.set_depth_polling_interval(req.interval)
-    return {"depth_polling_interval": interval}
-
-
-class DepthFinalizeTimeIn(BaseModel):
-    hour: int
-    minute: int
-
-
-@router.put("/preferences/depth-finalize-time")
-def update_depth_finalize_time(req: DepthFinalizeTimeIn, request: Request) -> dict:
-    """保存盘后 sealed 定版时间(范围15:01~18:00)并立即 reschedule。需 Pro+。"""
-    from app.tickflow.capabilities import Cap
-    request.app.state.capabilities.require(Cap.DEPTH5_BATCH)
-
-    from app.services import preferences
-    sched = preferences.set_depth_finalize_time(req.hour, req.minute)
-
-    from apscheduler.triggers.cron import CronTrigger
-    scheduler = getattr(request.app.state, "scheduler", None)
-    if scheduler:
-        scheduler.reschedule_job(
-            "depth_finalize",
-            trigger=CronTrigger(
-                day_of_week="mon-fri",
-                hour=sched["hour"],
-                minute=sched["minute"],
-                timezone="Asia/Shanghai",
-            ),
-        )
-        logger.info("depth_finalize rescheduled to %02d:%02d mon-fri", sched["hour"], sched["minute"])
-
-    return sched
-
-
 class ReviewScheduleIn(BaseModel):
     enabled: bool
     hour: int
@@ -1030,10 +951,9 @@ class ReviewScheduleIn(BaseModel):
 def update_review_schedule(req: ReviewScheduleIn, request: Request) -> dict:
     """保存定时复盘调度并立即更新 APScheduler job。
 
-    - enabled=True: 注册/更新 job(工作日定时生成复盘报告)
+    - enabled=True: 注册/更新 job(工作日定时生成复盘报告, 美东时间)
     - enabled=False: 移除 job(停止定时复盘)
     - 校验: 开启时若 AI Key 未配置则拒绝(复盘依赖 AI), 提示用户先配置。
-    - 时间下限 15:00(A股收盘), 由 preferences 层强制。
     """
     from app.services import preferences
 

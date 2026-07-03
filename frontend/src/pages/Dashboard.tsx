@@ -2,31 +2,22 @@ import { useState, useEffect, useRef, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Activity, ArrowDownRight, ArrowUpRight, BarChart3, BellRing, Database, Flame, Gauge, Info, LineChart, Loader2, Play, RefreshCw, Sparkles, Target, Timer } from 'lucide-react'
+import { Activity, ArrowDownRight, ArrowUpRight, BarChart3, BellRing, Bitcoin, Database, Gauge, Info, Layers3, LineChart, Loader2, Play, RefreshCw, Sparkles, Target, Timer } from 'lucide-react'
 import { DatePicker } from '@/components/DatePicker'
-import { api, type MarketSnapshotRow, type OverviewDimensionRankItem, type OverviewMarket, type AlertEvent } from '@/lib/api'
+import { api, type MarketSnapshotRow, type OverviewMarket, type AlertEvent } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { fmtBigNum, fmtPct } from '@/lib/format'
-import { useDataStatus, useCapabilities, useSettings } from '@/lib/useSharedQueries'
-import { SealedBadge } from '@/components/SealedBadge'
+import { useDataStatus, useSettings } from '@/lib/useSharedQueries'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { SettingsModal } from '@/components/data/SettingsModal'
 import { STAGE_LABELS } from '@/components/data/ActiveJobCard'
 import { cn } from '@/lib/cn'
 import { cnSignal } from '@/lib/signals'
-import { boardTag } from '@/components/stock-table/primitives'
+import { isCrypto } from '@/lib/markets'
+import { scoreColor } from '@/lib/palette'
 
 function n(v: number | null | undefined) {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
-}
-
-function scoreColor(v: number) {
-  // A 股惯例: 强势=红, 弱式=绿
-  if (v >= 70) return '#F04438'
-  if (v >= 55) return '#FB923C'
-  if (v >= 45) return '#F59E0B'
-  if (v >= 30) return '#84CC16'
-  return '#12B76A'
 }
 
 function fmtPrice(v: number | null | undefined, digits = 2) {
@@ -137,15 +128,7 @@ function MonitorWidget() {
                   title={ev.symbol ? `查看 ${ev.symbol} 日K` : undefined}
                   className="inline-flex items-center gap-1 min-w-0 shrink-0 rounded hover:bg-elevated/60 transition-colors -mx-0.5 px-0.5 cursor-pointer"
                 >
-                  <span className="font-mono text-[10px] font-medium text-foreground/80 hover:text-accent">{ev.symbol?.replace(/\.(SH|SZ|BJ)$/, '')}</span>
-                  {ev.symbol && (() => {
-                    const board = boardTag(ev.symbol)
-                    return board && (
-                      <span className={`inline-flex items-center justify-center h-3 w-3 rounded text-[7px] font-bold leading-none border ${board.color}`}>
-                        {board.label}
-                      </span>
-                    )
-                  })()}
+                  <span className="font-mono text-[10px] font-medium text-foreground/80 hover:text-accent">{ev.symbol?.replace(/\.\w+$/, '')}</span>
                   {ev.name && <span className="text-[10px] text-secondary truncate max-w-[5rem] hover:text-foreground">{ev.name}</span>}
                 </button>
                 <span className="flex-1" />
@@ -153,7 +136,7 @@ function MonitorWidget() {
                   <span className="text-[10px] font-mono text-foreground/60 shrink-0">{fmtPrice(ev.price)}</span>
                 )}
                 {ev.change_pct != null && (
-                  <span className={cn('text-[10px] font-mono font-medium shrink-0 w-12 text-right', pct >= 0 ? 'text-danger' : 'text-bear')}>
+                  <span className={cn('text-[10px] font-mono font-medium shrink-0 w-12 text-right', pct >= 0 ? 'text-bull' : 'text-bear')}>
                     {fmtPct(pct)}
                   </span>
                 )}
@@ -161,7 +144,7 @@ function MonitorWidget() {
               {/* 第二行: 策略类型走新格式, 其他走旧格式 */}
               {isStrategy ? (
                 <div className="mt-0.5 flex items-center gap-1.5">
-                  <span className={cn('text-[9px] font-medium', isNew ? 'text-danger' : 'text-emerald-400')}>
+                  <span className={cn('text-[9px] font-medium', isNew ? 'text-bull' : 'text-muted')}>
                     {isNew ? '进入' : '移出'}
                   </span>
                   <span className="text-[9px] text-muted">策略</span>
@@ -353,23 +336,33 @@ function EmotionRadar({ radar, score }: { radar: OverviewMarket['radar']; score:
   )
 }
 
-function LadderMini({ limit }: { limit: OverviewMarket['limit'] }) {
-  const tiers = limit.tiers.filter(t => t.boards >= 2).slice(0, 6)
+/** 加密快照卡 — 从 overview.indices 里取加密符号(BTC/ETH)展示 */
+function CryptoSnapshot({ indices }: { indices: OverviewMarket['indices'] }) {
+  const cryptoRows = indices.filter(item => isCrypto(item.symbol))
+  if (cryptoRows.length === 0) {
+    return <div className="rounded border border-dashed border-border py-5 text-center text-xs text-muted">暂无加密行情</div>
+  }
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between rounded bg-elevated/55 px-2 py-1.5 text-[11px]">
-        <span className="text-muted">封板率</span>
-        <span className="font-mono text-accent">{(limit.seal_rate ?? 0).toFixed(0)}%</span>
-      </div>
-      {tiers.length === 0 && <div className="rounded border border-dashed border-border py-5 text-center text-xs text-muted">暂无 2 板以上</div>}
-      {tiers.map(t => (
-        <div key={t.boards} className="grid grid-cols-[42px_1fr_auto] items-center gap-2 rounded bg-elevated/35 px-2 py-1.5">
-          <span className={`font-mono text-sm font-bold ${t.boards >= 5 ? 'text-bull' : t.boards >= 3 ? 'text-accent' : 'text-secondary'}`}>{t.boards}板</span>
-          <div className="h-1.5 overflow-hidden rounded-full bg-base">
-            <div className="h-full rounded-full bg-bull/70" style={{ width: `${Math.min(100, t.count * 12)}%` }} />
+      {cryptoRows.map(item => (
+        <Link
+          key={item.symbol}
+          to={`/indices?symbol=${encodeURIComponent(item.symbol)}`}
+          className="block rounded bg-elevated/35 px-2 py-1.5 transition-colors hover:bg-elevated"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-medium text-foreground">{item.name || item.symbol}</span>
+            <span className={`font-mono text-[11px] font-semibold ${pctClass(item.change_pct)}`}>{fmtIndexPct(item.change_pct)}</span>
           </div>
-          <span className="font-mono text-xs text-foreground">{t.count}</span>
-        </div>
+          <div className="mt-0.5 flex items-center justify-between gap-2 font-mono text-[10px] text-muted">
+            <span>{item.symbol}</span>
+            <span className="text-foreground/80">{fmtPrice(item.last_price ?? item.close)}</span>
+          </div>
+          <div className="mt-0.5 flex items-center justify-between gap-2 font-mono text-[9px] text-muted">
+            <span>高 {fmtPrice(item.high)} · 低 {fmtPrice(item.low)}</span>
+            <span>额 {fmtBigNum(item.amount)}</span>
+          </div>
+        </Link>
       ))}
     </div>
   )
@@ -407,8 +400,8 @@ function StockList({ title, rows, mode }: { title: string; rows: MarketSnapshotR
                 </>
               ) : mode === 'active' ? (
                 <>
-                  {/* overview 的 turnover_rate 为小数制, 需 ×100 转百分数显示 */}
-                  <div className="font-mono text-[11px] text-accent">{fmtPrice(r.turnover_rate != null ? r.turnover_rate * 100 : null, 1)}%</div>
+                  {/* overview 的 turnover_rate 已是百分数 (volume/float_shares*100), 直接显示 */}
+                  <div className="font-mono text-[11px] text-accent">{fmtPrice(r.turnover_rate, 1)}%</div>
                   <div className={`font-mono text-[9px] ${pctClass(r.change_pct)}`}>{fmtStockPct(r.change_pct)}</div>
                 </>
               ) : (
@@ -426,44 +419,31 @@ function StockList({ title, rows, mode }: { title: string; rows: MarketSnapshotR
   )
 }
 
-function RankColumn({ title, rows, tone }: { title: string; rows: OverviewDimensionRankItem[]; tone: 'bull' | 'bear' }) {
-  return (
-    <div className="min-w-0 space-y-1">
-      <div className={`text-[10px] font-medium ${tone === 'bull' ? 'text-bull' : 'text-bear'}`}>{title}</div>
-      {rows.slice(0, 5).map((r, idx) => (
-        <div key={`${title}-${r.name}-${idx}`} className="grid grid-cols-[14px_1fr_auto] items-center gap-1 rounded bg-elevated/40 px-1.5 py-1">
-          <span className="text-center font-mono text-[9px] text-muted">{idx + 1}</span>
-          <div className="min-w-0">
-            <div className="truncate text-[11px] text-foreground" title={r.name}>{r.name}</div>
-            <div className="truncate text-[9px] text-muted">{r.count}只 · {r.leader?.name ?? '—'}</div>
-          </div>
-          <div className={`font-mono text-[10px] font-semibold ${pctClass(r.avg_pct)}`}>{fmtStockPct(r.avg_pct)}</div>
-        </div>
-      ))}
-      {rows.length === 0 && <div className="rounded border border-dashed border-border py-4 text-center text-xs text-muted">暂无数据</div>}
-    </div>
-  )
-}
-
-function HotRankCard({ title, rank, configUrl }: { title: string; rank?: OverviewMarket['concept_rank']; configUrl: string }) {
-  const hasData = (rank?.leading?.length ?? 0) > 0 || (rank?.lagging?.length ?? 0) > 0
+/** 资产类结构卡 — overview.boards 按美股/加密两桶聚合 */
+function AssetClassCard({ boards }: { boards: OverviewMarket['boards'] }) {
   return (
     <section className="rounded-card border border-border bg-surface/80 p-2.5">
-      <SectionTitle icon={Flame} title={title} hint="领涨/领跌" />
-      {hasData ? (
-        <div className="grid grid-cols-2 gap-2">
-          <RankColumn title="领涨" rows={rank?.leading ?? []} tone="bull" />
-          <RankColumn title="领跌" rows={rank?.lagging ?? []} tone="bear" />
-        </div>
+      <SectionTitle icon={Layers3} title="资产类结构" hint="美股 / 加密" />
+      {boards.length === 0 ? (
+        <div className="py-4 text-center text-[11px] text-muted">暂无数据</div>
       ) : (
-        <div className="py-4 text-center">
-          <p className="text-[11px] text-muted">未配置扩展数据源</p>
-          <Link
-            to={configUrl}
-            className="mt-1.5 inline-block text-[11px] text-accent hover:text-accent/80 transition-colors"
-          >
-            前往配置 →
-          </Link>
+        <div className="grid grid-cols-2 gap-2">
+          {boards.map(b => (
+            <div key={b.board} className="rounded bg-elevated/40 px-2 py-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-medium text-foreground">{b.board}</span>
+                <span className="font-mono text-[10px] text-muted">{b.count}只</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-2 font-mono text-[10px]">
+                <span><span className="text-bull">{b.up}</span><span className="text-muted"> 涨 / </span><span className="text-bear">{b.down}</span><span className="text-muted"> 跌</span></span>
+                <span className={pctClass(b.up_pct - 50)}>{b.up_pct.toFixed(0)}%</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-2 font-mono text-[9px] text-muted">
+                <span>成交额</span>
+                <span className="text-foreground/80">{fmtBigNum(b.amount)}</span>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </section>
@@ -484,11 +464,7 @@ export function Dashboard() {
     placeholderData: (prev) => prev,
   })
   const data = overview.data
-  const caps = useCapabilities()
   const settings = useSettings()
-  const hasDepth = !!caps.data?.capabilities?.['depth5.batch']
-  const sealedReady = !!data?.limit?.sealed_ready
-  const isSealedDegrade = !hasDepth || !sealedReady
   // none 档(无 key / 无效 key): 不再阻断功能, 仅实时行情等扩展能力受限
   const isNoKey = settings.data?.mode === 'none'
   // 无本地数据(enriched/daily 都没有)→ 常驻引导卡片
@@ -670,10 +646,10 @@ export function Dashboard() {
       </div>
 
       <div className="mb-3 grid grid-cols-6 gap-2">
-        <KpiCell label="个股涨 / 平 / 跌" value={<><span className="text-bull">{data.breadth.up}</span><span className="text-muted">/</span><span className="text-muted">{data.breadth.flat}</span><span className="text-muted">/</span><span className="text-bear">{data.breadth.down}</span></>} sub={`上涨率 ${data.breadth.up_pct.toFixed(1)}%`} />
-        <KpiCell label="强势 / 弱势" value={<><span className="text-bull">{strongUp}</span><span className="text-muted">/</span><span className="text-bear">{strongDown}</span></>} sub="涨跌 ≥3%" />
-        <KpiCell label={<span className="inline-flex items-center gap-1">涨停 / 跌停<SealedBadge degraded={isSealedDegrade} hasDepth={hasDepth} isHistorical={false} sealedReady={sealedReady} sealedCountsUp={{ real: data.limit.limit_up, fake: data.limit.fake_up ?? 0, pending: 0 }} sealedCountsDown={{ real: data.limit.limit_down, fake: data.limit.fake_down ?? 0, pending: 0 }} rawUp={data.limit.limit_up + (data.limit.fake_up ?? 0)} rawDown={data.limit.limit_down + (data.limit.fake_down ?? 0)} invalidateKeys={['overview-market', 'limit-ladder']} /></span>} value={<><span className="text-bull">{data.limit.limit_up}</span><span className="text-muted">/</span><span className="text-bear">{data.limit.limit_down}</span></>} sub={`封板率 ${(data.limit.seal_rate ?? 0).toFixed(0)}%`} />
-        <KpiCell label="最高连板" value={`${data.limit.max_boards || 0}板`} sub={`梯队 ${data.limit.tiers.length}`} tone="accent" />
+        <KpiCell label="上涨家数" value={data.breadth.up} sub={`上涨率 ${data.breadth.up_pct.toFixed(1)}%`} tone="bull" />
+        <KpiCell label="下跌家数" value={data.breadth.down} sub={`平盘 ${data.breadth.flat}`} tone="bear" />
+        <KpiCell label="强势 / 弱势" value={<><span className="text-bull">{strongUp}</span><span className="text-muted">/</span><span className="text-bear">{strongDown}</span></>} sub="涨跌幅 ≥5%" />
+        <KpiCell label="60日新高" value={compactCount(data.trend.new_high)} sub={`60日新低 ${compactCount(data.trend.new_low)}`} tone="accent" />
         <KpiCell label="成交额" value={fmtBigNum(data.amount.total)} sub={`均额 ${fmtBigNum(data.amount.avg)}`} />
         <KpiCell label="换手 / 量比" value={`${fmtPrice(data.activity.avg_turnover, 1)}% / ${fmtPrice(data.activity.vol_ratio, 2)}`} sub={`高换手 ${data.activity.high_turnover} · 放量占比 ${fmtPrice(data.activity.high_vol_ratio, 1)}%`} tone="accent" />
       </div>
@@ -716,8 +692,8 @@ export function Dashboard() {
               <div className="mt-3 border-t border-border pt-2.5">
                 <SectionTitle icon={Target} title="实用监控" hint="盘中观察" />
                 <div className="grid grid-cols-3 gap-1.5">
-                  <MiniMetric label="炸板" value={`${data.limit.broken ?? 0}`} cls="text-warning" />
-                  <MiniMetric label="跌停" value={`${data.limit.limit_down ?? 0}`} cls="text-bear" />
+                  <MiniMetric label="强势 ≥5%" value={`${strongUp}`} cls="text-bull" />
+                  <MiniMetric label="弱势 ≤-5%" value={`${strongDown}`} cls="text-bear" />
                   <MiniMetric label="站上MA60" value={`${data.trend.above_ma60_pct.toFixed(0)}%`} cls="text-accent" />
                   <MiniMetric label="新高/新低" value={`${compactCount(data.trend.new_high)}/${compactCount(data.trend.new_low)}`} cls={data.trend.new_high >= data.trend.new_low ? 'text-bull' : 'text-bear'} />
                   <MiniMetric label="高换手数" value={`${data.activity.high_turnover}`} cls="text-accent" />
@@ -727,10 +703,7 @@ export function Dashboard() {
             </section>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <HotRankCard title="概念热度" rank={data.concept_rank} configUrl="/concept-analysis" />
-            <HotRankCard title="行业热度" rank={data.industry_rank} configUrl="/industry-analysis" />
-          </div>
+          <AssetClassCard boards={data.boards} />
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <StockList title="涨幅榜" rows={data.top_gainers} mode="gain" />
@@ -742,8 +715,8 @@ export function Dashboard() {
 
         <aside className="min-w-0 space-y-3">
           <section className="rounded-card border border-border bg-surface/80 p-3">
-            <SectionTitle icon={Flame} title="涨停梯队" hint={<span className="inline-flex items-center gap-1">{`涨停 ${data.limit.limit_up}`}{isSealedDegrade && <span className="text-[9px] px-1 rounded bg-yellow-500/10 text-yellow-600 dark:text-yellow-500">{hasDepth ? '未修正' : '降级'}</span>}</span>} />
-            <LadderMini limit={data.limit} />
+            <SectionTitle icon={Bitcoin} title="加密快照" hint="24/7 实时" />
+            <CryptoSnapshot indices={data.indices} />
           </section>
           <section className="rounded-card border border-border bg-surface/80 p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
@@ -786,7 +759,7 @@ function FetchDataCard({
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium text-foreground">当前暂无数据</div>
           <p className="mt-1 text-xs text-secondary leading-relaxed">
-            首次使用需获取行情数据后才能查看看板。系统将从免费数据源拉取近 1 年全 A 股日K(约 5500 只),预计 1-3 分钟,期间可继续浏览其他页面。
+            首次使用需获取行情数据后才能查看看板。系统将拉取近 1 年美股全市场日K(约 1.2 万只)与主流加密货币日K,预计 1-3 分钟,期间可继续浏览其他页面。
           </p>
           {isNoKey && (
             <p className="mt-1 text-[11px] text-warning/80 leading-relaxed">
@@ -868,7 +841,7 @@ function WelcomeFetchModal({
         </motion.div>
         <h3 className="mt-4 text-base font-semibold text-foreground">首次使用,需先获取行情数据</h3>
         <p className="mt-2 text-xs text-secondary leading-relaxed">
-          系统将从免费数据源拉取近 1 年全 A 股日K(约 5500 只),预计 1-3 分钟。
+          系统将从免费数据源拉取近 1 年美股全市场日K与主流加密货币日K,预计 1-3 分钟。
           同步期间可继续浏览其他页面,完成后看板自动刷新。
         </p>
         {isNoKey && (

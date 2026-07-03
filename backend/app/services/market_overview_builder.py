@@ -3,8 +3,8 @@
 本模块由 `app.api.overview._build_overview` 抽离而来,目的是让「大盘复盘」
 等无 Request 的调用方(定时任务、复盘服务)也能复用同一套聚合逻辑。
 
-行为与原 `_build_overview` 完全一致,仅把对 `request.app.state.{repo,
-quote_service,depth_service}` 的依赖改为显式参数。
+覆盖美股 + 加密双市场: 大盘基准取 SPY/QQQ/DIA/IWM(ETF 代理) + BTC/ETH,
+资产分桶按 symbol 形态(美股 .US 后缀 / 加密无后缀)划分。
 
 公共入口:
     build_market_overview(repo, quote_service, depth_service, as_of)
@@ -18,20 +18,15 @@ from typing import Any
 
 import polars as pl
 
+from app.markets import CORE_CRYPTO_SYMBOLS, CORE_INDEX_NAMES, CORE_INDEX_SYMBOLS, is_crypto
 from app.services.ext_data import ExtConfig, ExtConfigStore
 from app.services.screener import ScreenerService
 
 # ================================================================
-# 常量(与 overview.py 保持同步;复盘复盘仅 A 股核心指数)
+# 常量(大盘基准 = 美股 ETF 代理 + 核心加密, 来自 app.markets)
 # ================================================================
 
-CORE_INDEX_NAMES = {
-    "000001.SH": "上证指数",
-    "399001.SZ": "深证成指",
-    "399006.SZ": "创业板指",
-    "000680.SH": "科创综指",
-}
-CORE_INDEX_SYMBOLS = tuple(CORE_INDEX_NAMES.keys())
+OVERVIEW_INDEX_SYMBOLS = (*CORE_INDEX_SYMBOLS, *CORE_CRYPTO_SYMBOLS)
 
 _DIMENSION_SEP = re.compile(r"[、,，;；|/\s]+")
 
@@ -60,18 +55,9 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _board(symbol: str) -> str:
-    if symbol.endswith(".BJ"):
-        return "北交所"
-    if symbol.startswith(("300", "301")):
-        return "创业板"
-    if symbol.startswith(("688", "689")):
-        return "科创板"
-    if symbol.endswith(".SH"):
-        return "沪主板"
-    if symbol.endswith(".SZ"):
-        return "深主板"
-    return "其他"
+def _asset_bucket(symbol: str) -> str:
+    """按资产类别分桶: 加密(无后缀交易对) / 美股(带 .US 等后缀)。"""
+    return "加密" if is_crypto(symbol) else "美股"
 
 
 def _score(value: float, low: float, high: float) -> int:
@@ -94,12 +80,12 @@ def _quote_status(quote_service) -> dict:
 def _index_quotes(repo, quote_service, as_of: date | None = None) -> list[dict]:
     rows: list[dict] = []
     if quote_service and as_of is None:
-        df = quote_service.get_index_quotes(list(CORE_INDEX_SYMBOLS))
+        df = quote_service.get_index_quotes(list(OVERVIEW_INDEX_SYMBOLS))
         if not df.is_empty():
             rows = df.to_dicts()
 
     if not rows and repo:
-        placeholders = ", ".join("?" for _ in CORE_INDEX_SYMBOLS)
+        placeholders = ", ".join("?" for _ in OVERVIEW_INDEX_SYMBOLS)
         try:
             db_rows = repo.execute_all(
                 f"""
@@ -121,7 +107,7 @@ def _index_quotes(repo, quote_service, as_of: date | None = None) -> list[dict]:
                 SELECT symbol, date, last_price, prev_close
                 FROM latest
                 """,
-                [*CORE_INDEX_SYMBOLS, as_of, as_of],
+                [*OVERVIEW_INDEX_SYMBOLS, as_of, as_of],
             )
         except Exception:  # noqa: BLE001
             db_rows = []
@@ -146,7 +132,7 @@ def _index_quotes(repo, quote_service, as_of: date | None = None) -> list[dict]:
 
     by_symbol = {r.get("symbol"): r for r in rows}
     out = []
-    for symbol in CORE_INDEX_SYMBOLS:
+    for symbol in OVERVIEW_INDEX_SYMBOLS:
         r = by_symbol.get(symbol, {"symbol": symbol})
         out.append({
             "symbol": symbol,
@@ -316,7 +302,7 @@ def _top_rows(rows: list[dict], key: str, descending: bool, limit: int = 8) -> l
             "change_pct": _finite(r.get("change_pct")),
             "amount": _finite(r.get("amount")),
             "turnover_rate": _finite(r.get("turnover_rate")),
-            "board": _board(str(r.get("symbol") or "")),
+            "board": _asset_bucket(str(r.get("symbol") or "")),
         }
         for r in filtered[:limit]
     ]
@@ -358,14 +344,15 @@ def build_market_overview(
     depth_service=None,
     as_of: date | None = None,
 ) -> dict:
-    """装配市场总览(与原 overview._build_overview 行为一致)。
+    """装配市场总览(美股 + 加密双市场)。
 
     Args:
         repo: KlineRepository(必填)。
         quote_service: QuoteService(可选;实时指数行情来源)。
-        depth_service: DepthService(可选;五档封板修正)。
+        depth_service: 已废弃(五档服务随涨跌停功能移除), 仅为兼容旧调用方签名保留。
         as_of: 指定日期,None 则取最新有数据日。
     """
+    del depth_service  # 兼容占位, 不再使用
     svc = ScreenerService(repo)
     as_of = as_of or svc.latest_date()
     status = _quote_status(quote_service)
@@ -379,7 +366,6 @@ def build_market_overview(
             "breadth": {"total": 0, "up": 0, "down": 0, "flat": 0, "up_pct": 0, "down_pct": 0},
             "amount": {"total": 0, "avg": 0},
             "boards": [],
-            "limit": {"limit_up": 0, "broken": 0, "failed": 0, "limit_down": 0, "max_boards": 0, "tiers": []},
             "distribution": [],
             "trend": {"above_ma5": 0, "above_ma20": 0, "above_ma60": 0, "above_ma5_pct": 0, "above_ma20_pct": 0, "above_ma60_pct": 0, "new_high": 0, "new_low": 0},
             "activity": {"avg_turnover": 0, "high_turnover": 0, "high_vol_ratio": 0, "vol_ratio": 1},
@@ -389,8 +375,6 @@ def build_market_overview(
             "top_losers": [],
             "turnover_leaders": [],
             "active_leaders": [],
-            "concept_rank": {"leading": [], "lagging": []},
-            "industry_rank": {"leading": [], "lagging": []},
         }
 
     df = svc._load_enriched_for_date(as_of)
@@ -399,7 +383,7 @@ def build_market_overview(
     else:
         cols = [
             "symbol", "name", "close", "change_pct", "amount", "turnover_rate", "volume",
-            "vol_ratio_5d", "consecutive_limit_ups", "signal_limit_up", "signal_broken_limit_up", "signal_limit_down",
+            "vol_ratio_5d", "consecutive_up_days",
             "ma5", "ma20", "ma60", "high_60d", "low_60d", "signal_n_day_high", "signal_n_day_low",
         ]
         df = df.select([c for c in cols if c in df.columns])
@@ -426,31 +410,8 @@ def build_market_overview(
     pct_values = [v for v in pct_values if v is not None]
     avg_pct = sum(pct_values) / len(pct_values) if pct_values else 0
     median_pct = sorted(pct_values)[len(pct_values) // 2] if pct_values else 0
-    strong_up = sum(1 for v in pct_values if v >= 0.03)
-    strong_down = sum(1 for v in pct_values if v <= -0.03)
-
-    limit_up = sum(1 for r in rows if bool(r.get("signal_limit_up")) or (_finite(r.get("consecutive_limit_ups")) or 0) > 0)
-    broken = sum(1 for r in rows if bool(r.get("signal_broken_limit_up")))
-    limit_down = sum(1 for r in rows if bool(r.get("signal_limit_down")))
-    max_boards = max([int(_finite(r.get("consecutive_limit_ups")) or 0) for r in rows], default=0)
-
-    # 五档 sealed 修正: 假涨停/假跌停不计入(需 Pro+ depth5.batch 能力)
-    sealed_ready = False
-    fake_up = 0
-    fake_down = 0
-    if depth_service:
-        up_map = depth_service.get_sealed_map(as_of, is_down=False)
-        down_map = depth_service.get_sealed_map(as_of, is_down=True)
-        sealed_ready = bool(up_map or down_map) and depth_service.is_sealed_ready(as_of)
-        if up_map:
-            fake_up = sum(1 for v in up_map.values() if v.get("sealed") is False)
-        if down_map:
-            fake_down = sum(1 for v in down_map.values() if v.get("sealed") is False)
-    if sealed_ready:
-        limit_up = max(0, limit_up - fake_up)
-        limit_down = max(0, limit_down - fake_down)
-
-    seal_rate = limit_up / (limit_up + broken) * 100 if (limit_up + broken) > 0 else 0
+    strong_up = sum(1 for v in pct_values if v >= 0.05)
+    strong_down = sum(1 for v in pct_values if v <= -0.05)
 
     def above_ma_count(ma_key: str) -> int:
         return sum(1 for r in rows if (_finite(r.get("close")) is not None and _finite(r.get(ma_key)) is not None and (_finite(r.get("close")) or 0) >= (_finite(r.get(ma_key)) or 0)))
@@ -466,9 +427,10 @@ def build_market_overview(
     avg_turnover = sum(turnovers) / len(turnovers) if turnovers else 0
     high_turnover = sum(1 for v in turnovers if v >= 5)
 
+    # 资产分桶(美股 / 加密两桶)
     boards_map: dict[str, dict] = {}
     for r in rows:
-        b = _board(str(r.get("symbol") or ""))
+        b = _asset_bucket(str(r.get("symbol") or ""))
         item = boards_map.setdefault(b, {"board": b, "count": 0, "up": 0, "down": 0, "amount": 0.0})
         item["count"] += 1
         change = _finite(r.get("change_pct")) or 0
@@ -481,13 +443,6 @@ def build_market_overview(
     for b in boards:
         count = b["count"] or 1
         b["up_pct"] = b["up"] / count * 100
-
-    tiers_map: dict[int, int] = {}
-    for r in rows:
-        n = int(_finite(r.get("consecutive_limit_ups")) or 0)
-        if n > 0:
-            tiers_map[n] = tiers_map.get(n, 0) + 1
-    tiers = [{"boards": k, "count": v} for k, v in sorted(tiers_map.items(), key=lambda item: -item[0])]
 
     index_changes = [_finite(r.get("change_pct")) for r in indices]
     index_changes = [v for v in index_changes if v is not None]
@@ -503,7 +458,8 @@ def build_market_overview(
     strong_diff_pct = (strong_up - strong_down) / total * 100 if total else 0
     high_vol_pct = high_vol_ratio / total * 100 if total else 0
     strong_down_pct = strong_down / total * 100 if total else 0
-    tier2_count = sum(t["count"] for t in tiers if t["boards"] >= 2)
+    # 大波动占比: |涨跌幅| >= 5% 的家数占比(替代原涨停/连板投机维度)
+    big_move_pct = sum(1 for v in pct_values if abs(v) >= 0.05) / total * 100 if total else 0
     mainline_items = [*concept_rank["leading"][:3], *industry_rank["leading"][:3]]
     mainline_avg = max([_finite(item.get("avg_pct")) or 0 for item in mainline_items], default=0)
     mainline_cover_pct = max([(_finite(item.get("count")) or 0) / total * 100 for item in mainline_items], default=0) if total else 0
@@ -513,7 +469,7 @@ def build_market_overview(
         {"key": "index", "label": "指数", "value": _score(avg_index_pct, -2.5, 2.5)},
         {"key": "profit", "label": "赚钱", "value": round(_score(up_pct, 20, 80) * 0.45 + _score(avg_pct, -0.02, 0.02) * 0.25 + _score(median_pct, -0.02, 0.02) * 0.20 + _score(strong_diff_pct, -8, 8) * 0.10)},
         {"key": "money", "label": "量能", "value": round(_score(avg_vol_ratio, 0.6, 1.8) * 0.70 + _score(high_vol_pct, 2, 12) * 0.30)},
-        {"key": "speculation", "label": "投机", "value": round(_score(limit_up, 5, 90) * 0.25 + _score(seal_rate, 30, 85) * 0.35 + _score(max_boards, 1, 8) * 0.25 + _score(tier2_count, 0, 30) * 0.15)},
+        {"key": "speculation", "label": "波动", "value": _score(big_move_pct, 1, 15)},
         {"key": "resilience", "label": "抗跌", "value": 100 - round(_score(down_pct, 20, 80) * 0.55 + _score(strong_down_pct, 1, 12) * 0.45)},
         {"key": "mainline", "label": "主线", "value": mainline_score},
     ]
@@ -547,7 +503,6 @@ def build_market_overview(
         },
         "amount": {"total": total_amount, "avg": avg_amount},
         "boards": boards,
-        "limit": {"limit_up": limit_up, "broken": broken, "failed": 0, "limit_down": limit_down, "max_boards": max_boards, "seal_rate": seal_rate, "tiers": tiers, "sealed_ready": sealed_ready, "fake_up": fake_up, "fake_down": fake_down},
         "distribution": _pct_band_rows(pct_values),
         "trend": {
             "above_ma5": above_ma5,
@@ -571,6 +526,4 @@ def build_market_overview(
         "top_losers": _top_rows(rows, "change_pct", False),
         "turnover_leaders": _top_rows(rows, "amount", True),
         "active_leaders": _top_rows(rows, "turnover_rate", True),
-        "concept_rank": concept_rank,
-        "industry_rank": industry_rank,
     })

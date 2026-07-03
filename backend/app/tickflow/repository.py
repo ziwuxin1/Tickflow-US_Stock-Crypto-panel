@@ -60,7 +60,6 @@ class DataStore:
             "screener_results",
             "ai_cache",
             "user_data",
-            "depth5",
         ):
             (self.data_dir / sub).mkdir(parents=True, exist_ok=True)
 
@@ -127,7 +126,7 @@ class DataStore:
             except OSError:
                 logger.warning("legacy dir %s not empty, kept", legacy_dir)
             logger.info("legacy data migration done")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("legacy data migration failed (startup continues): %s", e)
 
     def _register_views(self) -> None:
@@ -173,9 +172,6 @@ class DataStore:
                 SELECT * FROM read_parquet('{d}/financials/balance_sheet/*.parquet', union_by_name=true)""",
             f"""CREATE OR REPLACE VIEW financials_cash_flow AS
                 SELECT * FROM read_parquet('{d}/financials/cash_flow/*.parquet', union_by_name=true)""",
-            # 五档盘口 sealed 真假涨停(独立旁路存储,不进 enriched)
-            f"""CREATE OR REPLACE VIEW depth5 AS
-                SELECT * FROM read_parquet('{d}/depth5/**/*.parquet', union_by_name=true)""",
         ]
         for sql in statements:
             try:
@@ -265,7 +261,7 @@ class DataStore:
                 continue
             try:
                 self.db.execute(f"CREATE OR REPLACE VIEW {name} AS " + " UNION ALL BY NAME ".join(parts))
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.debug("unified view %s skipped: %s", name, e)
 
 
@@ -293,6 +289,10 @@ class KlineRepository:
         self._etf_live_agg_cache: pl.DataFrame | None = None
         self._etf_live_agg_cache_date: date | None = None
         self._etf_instruments_cache: pl.DataFrame | None = None
+        # 加密 enriched 独立缓存槽: 与美股分离, 避免加密(UTC 次日)翻日时
+        # 清空美股缓存(美股今日); 美股/加密可各自不同日期, 读取端按 symbol 并集合并。
+        self._crypto_enriched_cache: pl.DataFrame | None = None
+        self._crypto_enriched_cache_date: date | None = None
 
         # parquet glob 路径
         self._enriched_glob = str(store.data_dir / "kline_daily_enriched" / "**" / "*.parquet")
@@ -305,7 +305,7 @@ class KlineRepository:
         self._etf_inst_glob = str(store.data_dir / "instruments_etf" / "**" / "*.parquet")
 
     def execute_all(self, sql: str, params: list | None = None) -> list[tuple]:
-        """线程安全的 SELECT → fetchall。DuckDB 单 connection 非线程安全，所有读路径须走此方法。"""
+        """线程安全的 SELECT → fetchall。DuckDB 单 connection 非线程安全,所有读路径须走此方法。"""
         with self._lock:
             return self.db.execute(sql, params or []).fetchall()
 
@@ -346,11 +346,13 @@ class KlineRepository:
         self._etf_live_agg_cache = None
         self._etf_live_agg_cache_date = None
         self._etf_instruments_cache = None
+        self._crypto_enriched_cache = None
+        self._crypto_enriched_cache_date = None
 
     def _refresh_enriched(self) -> None:
         """从 parquet 加载 enriched 最新日到内存 + 构建聚合表。
 
-        enriched parquet 仅存 14 列基础数据。启动时读入历史数据并即时计算完整指标，
+        enriched parquet 仅存窄表存储列。启动时读入历史数据并即时计算完整指标,
         将结果缓存在内存中供各服务使用。
 
         优化: 扩大历史读取范围, 同时缓存完整历史 (含指标), 供 filter_history 策略直接复用。
@@ -363,7 +365,7 @@ class KlineRepository:
                 self.clear_cache()
                 return
 
-            # Step 1: 直接读最新日期的分区文件 (仅 14 列)
+            # Step 1: 直接读最新日期的分区文件 (仅存储列)
             enriched_dir = self.store.data_dir / "kline_daily_enriched"
             ds = latest.isoformat() if hasattr(latest, "isoformat") else str(latest)
             target_parquet = enriched_dir / f"date={ds}" / "part.parquet"
@@ -375,17 +377,19 @@ class KlineRepository:
             if df_latest.is_empty():
                 return
 
-            # Step 2: 读近 300 天 14 列数据 → compute → filter(latest) → 缓存
+            # Step 2: 读近 300 天存储列数据 → compute → filter(latest) → 缓存
             # 300 日历天 ≈ 210 交易日, 覆盖 filter_history 最大 lookback(90) + warmup(60)
             try:
                 from datetime import timedelta
-                from app.indicators.pipeline import compute_indicators, compute_signals, compute_limit_signals
+
+                from app.indicators.pipeline import compute_indicators, compute_signals
                 start_full = latest - timedelta(days=300)
                 read_cols = [c for c in ["symbol", "date", "open", "high", "low", "close",
                                          "volume", "amount", "raw_close", "raw_high", "raw_low"]
                              if c in df_latest.columns]
                 lf = (
-                    pl.scan_parquet(self._enriched_glob)
+                    pl.scan_parquet(self._enriched_glob,
+                                    extra_columns="ignore", missing_columns="insert")
                     .filter(pl.col("date") >= start_full)
                     .sort(["symbol", "date"])
                 )
@@ -394,8 +398,6 @@ class KlineRepository:
                     instruments = self._instruments_cache if self._instruments_cache is not None else pl.DataFrame()
                     df_full = compute_indicators(df_hist)
                     df_full = compute_signals(df_full)
-                    if instruments is not None and not instruments.is_empty():
-                        df_full = compute_limit_signals(df_full, instruments)
 
                     # JOIN instruments 到完整历史 (filter_history/basic_filter 需要 name/股本等列)
                     if instruments is not None and not instruments.is_empty():
@@ -424,16 +426,16 @@ class KlineRepository:
                         self._build_live_agg(self._live_agg_baseline_date(latest))
                         logger.info("enriched 缓存已计算: %d 只, 日期 %s (即时计算)", len(df_today), latest)
                         return
-            except Exception as e:  # noqa: BLE001
-                logger.warning("enriched 即时计算失败, 使用原始 14 列缓存: %s", e)
+            except Exception as e:
+                logger.warning("enriched 即时计算失败, 使用原始存储列缓存: %s", e)
 
-            # 降级: 直接使用 14 列数据 + 构建 live_agg
+            # 降级: 直接使用存储列数据 + 构建 live_agg
             self._enriched_cache = df_latest
             self._enriched_cache_date = latest
             self._build_live_agg(self._live_agg_baseline_date(latest))
 
             logger.info("enriched 缓存已加载: %d 只, 日期 %s", len(df_latest), latest)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("enriched 缓存刷新失败: %s", e)
 
     def _build_live_agg(self, latest: date) -> None:
@@ -442,6 +444,7 @@ class KlineRepository:
         优化: 优先使用 _enriched_history_cache (启动时已计算), 避免重复 compute_indicators。
         """
         from datetime import timedelta
+
         from app.indicators.pipeline import _ema_alpha
 
         start_60d = latest - timedelta(days=90)  # 日历90天 ≈ 60个交易日
@@ -540,19 +543,25 @@ class KlineRepository:
         ])
         agg_a = agg_a.join(df_vol, on="symbol", how="left")
 
-        # 昨日连板数: 从 enriched parquet 取 (用于增量计算同向 +1)
-        lf = pl.scan_parquet(self._enriched_glob).filter(pl.col("date") == latest)
-        consec_cols = [c for c in ["symbol", "consecutive_limit_ups", "consecutive_limit_downs"]
-                       if c in lf.collect_schema().names()]
-        if len(consec_cols) == 3:
-            consec_df = lf.select(consec_cols).collect()
+        # 昨日连涨天数: 从 enriched parquet 取 (用于增量递推 consecutive_up_days)。
+        # 旧分区缺列时用 0 兜底, 保证增量管道列齐全。
+        lf = pl.scan_parquet(self._enriched_glob,
+                             extra_columns="ignore", missing_columns="insert").filter(
+            pl.col("date") == latest
+        )
+        schema_names = lf.collect_schema().names()
+        if "consecutive_up_days" in schema_names and "symbol" in schema_names:
+            consec_df = lf.select(["symbol", "consecutive_up_days"]).collect()
             if not consec_df.is_empty():
                 consec = consec_df.select(
                     "symbol",
-                    pl.col("consecutive_limit_ups").alias("_prev_consec_up"),
-                    pl.col("consecutive_limit_downs").alias("_prev_consec_down"),
+                    pl.col("consecutive_up_days").fill_null(0).cast(pl.UInt32)
+                    .alias("_prev_consec_up_days"),
                 )
                 agg_a = agg_a.join(consec, on="symbol", how="left")
+        if "_prev_consec_up_days" not in agg_a.columns:
+            agg_a = agg_a.with_columns(pl.lit(0).cast(pl.UInt32).alias("_prev_consec_up_days"))
+        agg_a = agg_a.with_columns(pl.col("_prev_consec_up_days").fill_null(0))
 
         # B类: 按 symbol 分组聚合 — 窗口统计
         agg_b = (
@@ -602,7 +611,7 @@ class KlineRepository:
             if row and row[0]:
                 d = row[0]
                 return d if isinstance(d, date) else date.fromisoformat(str(d))
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         return latest
 
@@ -611,7 +620,8 @@ class KlineRepository:
         from app.indicators.pipeline import compute_indicators
 
         lf = (
-            pl.scan_parquet(self._enriched_glob)
+            pl.scan_parquet(self._enriched_glob,
+                            extra_columns="ignore", missing_columns="insert")
             .filter(pl.col("date") >= start_60d)
             .filter(pl.col("date") <= latest)
             .sort(["symbol", "date"])
@@ -660,6 +670,7 @@ class KlineRepository:
                 return
 
             from datetime import timedelta
+
             from app.indicators.pipeline import compute_indicators, compute_signals
             start_full = latest - timedelta(days=300)
             read_cols = [c for c in ["symbol", "date", "open", "high", "low", "close",
@@ -667,7 +678,8 @@ class KlineRepository:
                          if c in df_latest.columns]
             df_hist = (
                 pl.scan_parquet(self._etf_enriched_glob,
-                                cast_options=pl.ScanCastOptions(integer_cast="allow-float"))
+                                cast_options=pl.ScanCastOptions(integer_cast="allow-float"),
+                                extra_columns="ignore", missing_columns="insert")
                 .filter(pl.col("date") >= start_full)
                 .select(read_cols)
                 .sort(["symbol", "date"])
@@ -679,7 +691,7 @@ class KlineRepository:
                 df_full = compute_signals(compute_indicators(df_hist))
                 self._etf_enriched_cache = df_full.filter(pl.col("date") == latest).sort(["symbol"])
             self._etf_enriched_cache_date = latest
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug("ETF enriched 缓存刷新跳过: %s", e)
 
     def _refresh_instruments(self) -> None:
@@ -689,7 +701,7 @@ class KlineRepository:
             if not df.is_empty():
                 self._instruments_cache = df
                 logger.info("instruments 缓存已加载: %d 只", len(df))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("instruments 缓存刷新失败: %s", e)
 
     def _refresh_index_instruments(self) -> None:
@@ -699,17 +711,17 @@ class KlineRepository:
             if not df.is_empty():
                 self._index_instruments_cache = df
                 logger.info("index instruments 缓存已加载: %d 只", len(df))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug("index instruments 缓存刷新跳过: %s", e)
 
     def _refresh_etf_instruments(self) -> None:
-        """加载 ETF instruments 到内存；兼容旧版 instruments_index 中的 ETF。"""
+        """加载 ETF instruments 到内存;兼容旧版 instruments_index 中的 ETF。"""
         parts: list[pl.DataFrame] = []
         try:
             df = pl.scan_parquet(self._etf_inst_glob).collect()
             if not df.is_empty():
                 parts.append(df)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug("etf instruments 缓存刷新跳过(new): %s", e)
         try:
             legacy = self.get_index_instruments()
@@ -717,25 +729,47 @@ class KlineRepository:
                 legacy = legacy.filter(pl.col("asset_type") == "etf")
                 if not legacy.is_empty():
                     parts.append(legacy)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug("etf instruments legacy fallback skipped: %s", e)
         if parts:
             df_all = pl.concat(parts, how="diagonal_relaxed").unique(subset=["symbol"], keep="last").sort("symbol")
             self._etf_instruments_cache = df_all
             logger.info("ETF instruments 缓存已加载: %d 只", len(df_all))
 
-    def get_enriched_latest(self) -> tuple[pl.DataFrame, date | None]:
-        """返回缓存的 enriched 最新日 DataFrame + 日期。如无缓存则懒加载。"""
+    def _get_stock_enriched_cache(self) -> tuple[pl.DataFrame, date | None]:
+        """仅美股 enriched 缓存(不并入加密), 供增量递推等内部路径使用。"""
         if self._enriched_cache is None:
             self._refresh_enriched()
         if self._enriched_cache is None:
             return pl.DataFrame(), self._enriched_cache_date
         return self._enriched_cache, self._enriched_cache_date
 
+    def get_enriched_latest(self) -> tuple[pl.DataFrame, date | None]:
+        """返回缓存的 enriched 最新日 DataFrame + 日期。如无缓存则懒加载。
+
+        美股与加密走独立缓存槽(可各自不同日期: 美股今日 / 加密 UTC 日),
+        此处按 symbol 并集合并两类, 保证美股不被加密翻日清空、加密行仍在实时视图。
+        返回日期以美股缓存为主(实时视图的主市场), 美股为空时回退加密日期。
+        """
+        stock_df, stock_date = self._get_stock_enriched_cache()
+        crypto_df = self._crypto_enriched_cache
+        if crypto_df is None or crypto_df.is_empty():
+            return stock_df, stock_date
+        if stock_df.is_empty():
+            return crypto_df, (stock_date or self._crypto_enriched_cache_date)
+        merged = pl.concat([stock_df, crypto_df], how="diagonal_relaxed").unique(
+            subset=["symbol", "date"], keep="last"
+        )
+        return merged, stock_date
+
     def get_enriched_latest_asset(self, asset_type: str) -> tuple[pl.DataFrame, date | None]:
-        """按资产类型返回最新 enriched 缓存。stock 保持旧缓存语义。"""
+        """按资产类型返回最新 enriched 缓存。stock 保持旧缓存语义(仅美股)。"""
         if asset_type == "stock":
-            return self.get_enriched_latest()
+            return self._get_stock_enriched_cache()
+        if asset_type == "crypto":
+            if self._crypto_enriched_cache is None:
+                return pl.DataFrame(), self._crypto_enriched_cache_date
+            return self._crypto_enriched_cache, self._crypto_enriched_cache_date
         if asset_type == "etf":
             if self._etf_enriched_cache is None:
                 self._refresh_etf_enriched()
@@ -773,7 +807,7 @@ class KlineRepository:
         symbols: list[str] | None = None,
         columns: list[str] | None = None,
     ) -> pl.DataFrame | None:
-        """从预计算 enriched 历史缓存返回完整区间；缓存不覆盖时返回 None。"""
+        """从预计算 enriched 历史缓存返回完整区间;缓存不覆盖时返回 None。"""
         if self._enriched_history_cache is None:
             self._refresh_enriched()
         cache = self._enriched_history_cache
@@ -800,10 +834,10 @@ class KlineRepository:
     def get_live_agg(self) -> pl.DataFrame:
         """返回盘中实时指标预计算聚合表。如无缓存则懒加载。
 
-        live_agg 的核心列 _prev_consec_up/down (昨日连板数) 取自基准日 enriched。
+        live_agg 的核心列 _prev_consec_up_days (昨日连涨天数) 取自基准日 enriched。
         基准日由 _live_agg_baseline_date 决定: 盘中(today 有实时分区) 取上一交易日,
         非盘中(磁盘最新日 < today) 取该最新日本身。一旦跨日, 期望基准日会前移,
-        旧缓存会把连板数整体少算一档, 故这里除首次懒加载外还要校验基准日是否仍
+        旧缓存会把连涨天数整体少算一档, 故这里除首次懒加载外还要校验基准日是否仍
         符合当前预期, 不符则重建 (无需等盘后管道刷缓存)。
 
         性能: get_live_agg 被每轮实时行情调用 (expert 档 1s 一次)。跨日只在
@@ -849,7 +883,7 @@ class KlineRepository:
         return self._index_instruments_cache
 
     def get_etf_instruments(self) -> pl.DataFrame:
-        """返回缓存的 ETF instruments DataFrame；兼容旧版 instruments_index 中的 ETF。"""
+        """返回缓存的 ETF instruments DataFrame;兼容旧版 instruments_index 中的 ETF。"""
         if self._etf_instruments_cache is None:
             self._refresh_etf_instruments()
         if self._etf_instruments_cache is None:
@@ -857,7 +891,7 @@ class KlineRepository:
         return self._etf_instruments_cache
 
     def get_instruments_asset(self, asset_type: str) -> pl.DataFrame:
-        """按资产类型返回 instruments；老 stock 路径保持原样。"""
+        """按资产类型返回 instruments;老 stock 路径保持原样。"""
         if asset_type == "stock":
             return self.get_instruments()
         if asset_type == "index":
@@ -891,26 +925,30 @@ class KlineRepository:
         end: date,
         columns: list[str] | None = None,
     ) -> pl.DataFrame:
-        """单股日K查询 — 从14列parquet读取后即时计算指标。"""
+        """单股日K查询 — 从存储列 parquet 读取后即时计算指标。"""
         from datetime import timedelta
 
         # 扩展范围用于指标预热 (MA60 需要 ~60 交易日 ≈ 120 日历日)
         warmup_start = start - timedelta(days=150)
 
-        # 扫描14列 parquet
+        # 扫描存储列 parquet
         df = self._scan_daily_symbol(symbol, warmup_start, end, None)
         if not df.is_empty():
             df = self._compute_enriched_range(df)
 
-        # 尝试用缓存数据覆盖最新日 (盘中更准确)
-        cached, cache_date = self.get_enriched_latest()
-        if not df.is_empty() and cached is not None and not cached.is_empty() and cache_date:
-            if start <= cache_date <= end:
-                cached_part = self._filter_cached(cached, symbol, None)
-                if not cached_part.is_empty():
-                    df = df.filter(pl.col("date") != cache_date)
-                    common_cols = [c for c in df.columns if c in cached_part.columns]
-                    df = pl.concat([df.select(common_cols), cached_part.select(common_cols)])
+        # 尝试用缓存数据覆盖最新日 (盘中更准确) — 单股按 asset 取对应缓存
+        from app import markets
+        if markets.is_crypto(symbol):
+            cached, cache_date = self.get_enriched_latest_asset("crypto")
+        else:
+            cached, cache_date = self._get_stock_enriched_cache()
+        if (not df.is_empty() and cached is not None and not cached.is_empty()
+                and cache_date and start <= cache_date <= end):
+            cached_part = self._filter_cached(cached, symbol, None)
+            if not cached_part.is_empty():
+                df = df.filter(pl.col("date") != cache_date)
+                common_cols = [c for c in df.columns if c in cached_part.columns]
+                df = pl.concat([df.select(common_cols), cached_part.select(common_cols)])
 
         # 裁剪到请求范围
         if not df.is_empty():
@@ -931,9 +969,8 @@ class KlineRepository:
     ) -> pl.DataFrame:
         """批量日K查询。"""
         cached, cache_date = self.get_enriched_latest()
-        if cached is not None and not cached.is_empty() and cache_date:
-            if start >= cache_date:
-                return self._filter_cached_batch(cached, symbols, columns)
+        if cached is not None and not cached.is_empty() and cache_date and start >= cache_date:
+            return self._filter_cached_batch(cached, symbols, columns)
 
         # 回退 scan_parquet
         return self._scan_daily_batch(symbols, start, end, columns)
@@ -965,13 +1002,13 @@ class KlineRepository:
         end: date,
         columns: list[str] | None = None,
     ) -> pl.DataFrame:
-        """ETF 日K查询 — 优先读独立 ETF enriched，兼容旧版 index enriched 中的 ETF。"""
+        """ETF 日K查询 — 优先读独立 ETF enriched,兼容旧版 index enriched 中的 ETF。"""
         from datetime import timedelta
 
         warmup_start = start - timedelta(days=150)
         df = self._scan_etf_daily_symbol(symbol, warmup_start, end, None)
         if df.is_empty():
-            # 旧版 ETF 曾存入 kline_index_enriched；没有独立数据时回退读取。
+            # 旧版 ETF 曾存入 kline_index_enriched;没有独立数据时回退读取。
             df = self._scan_index_daily_symbol(symbol, warmup_start, end, None)
         if not df.is_empty():
             df = self._compute_index_enriched_range(df)
@@ -1008,7 +1045,7 @@ class KlineRepository:
                 (pl.col("symbol") == symbol)
                 & (pl.col("datetime").dt.date() == trade_date)
             ).sort("datetime").collect()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("分钟K查询失败: %s", e)
             return pl.DataFrame()
 
@@ -1017,8 +1054,8 @@ class KlineRepository:
     # ================================================================
 
     def _compute_enriched_range(self, df: pl.DataFrame) -> pl.DataFrame:
-        """对14列enriched数据即时计算完整指标+信号。输入应含足够预热行数。"""
-        from app.indicators.pipeline import compute_indicators, compute_signals, compute_limit_signals, filter_halt_days
+        """对存储列 enriched 数据即时计算完整指标+信号。输入应含足够预热行数。"""
+        from app.indicators.pipeline import compute_indicators, compute_signals, filter_halt_days
         if df.is_empty() or df.height < 2:
             return df
         # 兜底过滤历史脏数据中的停牌日 (close 可能被填充为前收盘价)
@@ -1028,21 +1065,19 @@ class KlineRepository:
         try:
             df = compute_indicators(df)
             df = compute_signals(df)
-            instruments = self.get_instruments()
-            df = compute_limit_signals(df, instruments)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("on-demand compute failed: %s", e)
         return df
 
     def _compute_index_enriched_range(self, df: pl.DataFrame) -> pl.DataFrame:
-        """指数只计算通用技术指标和通用信号，跳过涨跌停/股本/市值逻辑。"""
+        """指数只计算通用技术指标和通用信号,跳过涨跌停/股本/市值逻辑。"""
         from app.indicators.pipeline import compute_indicators, compute_signals
         if df.is_empty() or df.height < 2:
             return df
         try:
             df = compute_indicators(df)
             df = compute_signals(df)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("index on-demand compute failed: %s", e)
         return df
 
@@ -1063,7 +1098,8 @@ class KlineRepository:
     def _scan_daily_symbol(self, symbol: str, start: date, end: date, columns: list[str] | None) -> pl.DataFrame:
         try:
             lf = pl.scan_parquet(self._enriched_glob,
-                                 cast_options=pl.ScanCastOptions(integer_cast="allow-float")).filter(
+                                 cast_options=pl.ScanCastOptions(integer_cast="allow-float"),
+                                 extra_columns="ignore", missing_columns="insert").filter(
                 (pl.col("symbol") == symbol)
                 & (pl.col("date") >= start)
                 & (pl.col("date") <= end)
@@ -1073,14 +1109,15 @@ class KlineRepository:
                 existing = [c for c in columns if c in schema_names]
                 lf = lf.select(existing)
             return lf.collect()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("日K查询失败: %s", e)
             return pl.DataFrame()
 
     def _scan_daily_batch(self, symbols: list[str], start: date, end: date, columns: list[str] | None) -> pl.DataFrame:
         try:
             lf = pl.scan_parquet(self._enriched_glob,
-                                 cast_options=pl.ScanCastOptions(integer_cast="allow-float")).filter(
+                                 cast_options=pl.ScanCastOptions(integer_cast="allow-float"),
+                                 extra_columns="ignore", missing_columns="insert").filter(
                 (pl.col("symbol").is_in(symbols))
                 & (pl.col("date") >= start)
                 & (pl.col("date") <= end)
@@ -1090,14 +1127,15 @@ class KlineRepository:
                 existing = [c for c in columns if c in schema_names]
                 lf = lf.select(existing)
             return lf.collect()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("日K批量查询失败: %s", e)
             return pl.DataFrame()
 
     def _scan_index_daily_symbol(self, symbol: str, start: date, end: date, columns: list[str] | None) -> pl.DataFrame:
         try:
             lf = pl.scan_parquet(self._index_enriched_glob,
-                                 cast_options=pl.ScanCastOptions(integer_cast="allow-float")).filter(
+                                 cast_options=pl.ScanCastOptions(integer_cast="allow-float"),
+                                 extra_columns="ignore", missing_columns="insert").filter(
                 (pl.col("symbol") == symbol)
                 & (pl.col("date") >= start)
                 & (pl.col("date") <= end)
@@ -1107,14 +1145,15 @@ class KlineRepository:
                 existing = [c for c in columns if c in schema_names]
                 lf = lf.select(existing)
             return lf.collect()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("指数日K查询失败: %s", e)
             return pl.DataFrame()
 
     def _scan_etf_daily_symbol(self, symbol: str, start: date, end: date, columns: list[str] | None) -> pl.DataFrame:
         try:
             lf = pl.scan_parquet(self._etf_enriched_glob,
-                                 cast_options=pl.ScanCastOptions(integer_cast="allow-float")).filter(
+                                 cast_options=pl.ScanCastOptions(integer_cast="allow-float"),
+                                 extra_columns="ignore", missing_columns="insert").filter(
                 (pl.col("symbol") == symbol)
                 & (pl.col("date") >= start)
                 & (pl.col("date") <= end)
@@ -1124,7 +1163,7 @@ class KlineRepository:
                 existing = [c for c in columns if c in schema_names]
                 lf = lf.select(existing)
             return lf.collect()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug("ETF 日K查询跳过: %s", e)
             return pl.DataFrame()
 
@@ -1209,11 +1248,47 @@ class KlineRepository:
         return None
 
     def latest_daily_date(self) -> date | None:
-        """本地日K数据的最新日期。"""
+        """本地日K数据的最新日期(全表, 含美股+加密)。"""
         try:
             with self._lock:
                 res = self.db.execute(
                     "SELECT max(date) FROM kline_daily",
+                ).fetchone()
+            if res and res[0]:
+                d = res[0]
+                return d if isinstance(d, date) else date.fromisoformat(str(d))
+        except Exception:
+            return None
+        return None
+
+    def latest_stock_daily_date(self) -> date | None:
+        """本地美股日K的最新日期(排除加密, 避免加密 UTC 日污染美股增量口径)。
+
+        混合单存储下 kline_daily 同时含美股与加密; 美股 symbol 带交易所后缀(如
+        AAPL.US)含 '.', 加密(如 BTCUSDT)不含 '.'。用是否含 '.' 区分, 与
+        markets.asset_class 语义一致。
+        """
+        try:
+            with self._lock:
+                res = self.db.execute(
+                    "SELECT max(date) FROM kline_daily WHERE symbol LIKE '%.%'",
+                ).fetchone()
+            if res and res[0]:
+                d = res[0]
+                return d if isinstance(d, date) else date.fromisoformat(str(d))
+        except Exception:
+            return None
+        return None
+
+    def latest_crypto_daily_date(self) -> date | None:
+        """本地加密日K的最新日期(仅加密, 用于加密回补起点)。
+
+        加密 symbol 不含交易所后缀 '.'(如 BTCUSDT), 与 markets.asset_class 一致。
+        """
+        try:
+            with self._lock:
+                res = self.db.execute(
+                    "SELECT max(date) FROM kline_daily WHERE symbol NOT LIKE '%.%'",
                 ).fetchone()
             if res and res[0]:
                 d = res[0]
@@ -1231,7 +1306,7 @@ class KlineRepository:
             if res and res[0]:
                 d = res[0]
                 return d if isinstance(d, date) else date.fromisoformat(str(d))
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
         return None
 
@@ -1246,7 +1321,7 @@ class KlineRepository:
         self._write_daily_partition(df, "kline_daily")
 
     def append_enriched(self, df: pl.DataFrame) -> None:
-        """按日分区写入 enriched 数据 (merge-upsert)。磁盘仅写入 14 列存储列。"""
+        """按日分区写入 enriched 数据 (merge-upsert)。磁盘仅写入窄表存储列。"""
         if df.is_empty():
             return
         from app.indicators.pipeline import ENRICHED_STORAGE_COLS
@@ -1285,7 +1360,7 @@ class KlineRepository:
         self._write_daily_partition(df_storage, "kline_etf_enriched")
 
     def append_daily_asset(self, asset_type: str, df: pl.DataFrame) -> None:
-        """按资产类型写入日K；stock/index 保持旧目录兼容。"""
+        """按资产类型写入日K;stock/index 保持旧目录兼容。"""
         if asset_type == "stock":
             self.append_daily(df)
         elif asset_type == "index":
@@ -1294,7 +1369,7 @@ class KlineRepository:
             self.append_etf_daily(df)
 
     def append_enriched_asset(self, asset_type: str, df: pl.DataFrame) -> None:
-        """按资产类型写入 enriched；stock/index 保持旧目录兼容。"""
+        """按资产类型写入 enriched;stock/index 保持旧目录兼容。"""
         if asset_type == "stock":
             self.append_enriched(df)
         elif asset_type == "index":
@@ -1346,13 +1421,13 @@ class KlineRepository:
             try:
                 with self._lock:
                     self.db.execute(sql)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.debug("index/etf view refresh skipped: %s", e)
         with self._lock:
             self.store._register_unified_views()
 
     def _write_daily_partition(self, df: pl.DataFrame, table: str) -> None:
-        """按 date 分区写入 parquet，每个日期一个文件，支持 merge-upsert。"""
+        """按 date 分区写入 parquet,每个日期一个文件,支持 merge-upsert。"""
         base = self.store.data_dir / table
         for date_df in df.partition_by("date"):
             dt = date_df["date"][0]
@@ -1368,7 +1443,7 @@ class KlineRepository:
             date_df.write_parquet(out)
 
     def merge_live_daily_asset(self, asset_type: str, df: pl.DataFrame) -> None:
-        """按 symbol 合并当天指定资产日K分区。用于少量自选实时，不覆盖全市场。"""
+        """按 symbol 合并当天指定资产日K分区。用于少量自选实时,不覆盖全市场。"""
         if df.is_empty() or "date" not in df.columns:
             return
         table = {
@@ -1402,6 +1477,13 @@ class KlineRepository:
         elif asset_type == "etf":
             table = "kline_etf_enriched"
             existing_cache = self._etf_enriched_cache if self._etf_enriched_cache_date == dt else pl.DataFrame()
+        elif asset_type == "crypto":
+            # 加密与美股共用 kline_daily_enriched 磁盘目录(混合单存储),
+            # 但内存缓存走独立槽, 避免翻日时误清美股缓存。
+            table = "kline_daily_enriched"
+            existing_cache = (
+                self._crypto_enriched_cache if self._crypto_enriched_cache_date == dt else pl.DataFrame()
+            )
         elif asset_type == "index":
             table = "kline_index_enriched"
             existing_cache = pl.DataFrame()
@@ -1420,6 +1502,9 @@ class KlineRepository:
         elif asset_type == "etf":
             self._etf_enriched_cache = merged_cache
             self._etf_enriched_cache_date = dt
+        elif asset_type == "crypto":
+            self._crypto_enriched_cache = merged_cache
+            self._crypto_enriched_cache_date = dt
 
         from app.indicators.pipeline import ENRICHED_STORAGE_COLS
         storage_cols = [c for c in ENRICHED_STORAGE_COLS if c in df.columns]
@@ -1462,7 +1547,7 @@ class KlineRepository:
     def flush_live_enriched(self, df: pl.DataFrame) -> None:
         """覆写当天 kline_daily_enriched 分区 (实时 enriched 落盘, 非merge)。
 
-        内存缓存保留完整指标列供各服务使用，磁盘仅写入 14 列存储列。
+        内存缓存保留完整指标列供各服务使用,磁盘仅写入窄表存储列。
         """
         self.flush_live_enriched_asset("stock", df)
 

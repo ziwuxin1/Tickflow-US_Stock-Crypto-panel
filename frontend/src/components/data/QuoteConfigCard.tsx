@@ -27,7 +27,7 @@ export function QuoteConfigCard({ enabled, running, isTrading, lastFetchMs, inte
   const statusText = !enabled
     ? '已关闭'
     : !isTrading
-      ? '非交易时段'
+      ? '美股非交易时段'
       : running
         ? '行情运行中'
         : '已停止'
@@ -75,8 +75,8 @@ export function QuoteConfigCard({ enabled, running, isTrading, lastFetchMs, inte
             </div>
           </div>
           <div className="flex items-center justify-between text-[11px]">
-            <span className="text-muted">交易时段</span>
-            <span className={`font-mono ${isTrading ? 'text-accent' : 'text-muted'}`}>{isTrading ? '交易中' : '休市'}</span>
+            <span className="text-muted">美股时段</span>
+            <span className={`font-mono ${isTrading ? 'text-accent' : 'text-muted'}`}>{isTrading ? '交易中' : '休市 · 加密 24/7'}</span>
           </div>
           <div className="flex items-center justify-between text-[11px]">
             <div className="flex items-center gap-1">

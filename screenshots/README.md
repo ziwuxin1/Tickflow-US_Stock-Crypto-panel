@@ -16,14 +16,6 @@
 
 ![监控中心](./monitor.png)
 
-### 连板梯队 Limit Ladder
-
-![连板梯队页](./limit-ladder.png)
-
-### 概念分析 Concept
-
-![概念分析](./concept-analysis.png)
-
 ### 财务分析
 
 ![财务分析](./财务分析.png)

@@ -13,7 +13,7 @@ import { ColumnCustomizer } from '@/components/ColumnCustomizer'
 import { StockDataTable } from '@/components/stock-table/StockDataTable'
 import { useTableSort } from '@/components/stock-table/useTableSort'
 import { MiniCandlestick } from '@/components/stock-table/MiniCandlestick'
-import { boardTag, renderBuiltinDataCell } from '@/components/stock-table/primitives'
+import { renderBuiltinDataCell } from '@/components/stock-table/primitives'
 import { getSignals, signalCls, getSortValue, UNSORTABLE_KEYS } from '@/lib/stock-table'
 import { resolveCandleConfig } from '@/lib/list-columns'
 import { useQuoteStatus } from '@/lib/useSharedQueries'
@@ -25,21 +25,6 @@ import {
   saveColumnConfig,
   buildExtColumnsParam,
 } from '@/lib/watchlist-columns'
-
-// ===== 板块标识（筛选/卡片用） =====
-// 注: boardTag（创/科/北 标签）已移至共享 @/components/stock-table/primitives
-
-const BOARDS = ['沪主板', '深主板', '创业板', '科创板', '北交所'] as const
-type BoardType = typeof BOARDS[number]
-
-function getBoardType(symbol: string): BoardType | null {
-  if (/^(300|301)/.test(symbol)) return '创业板'
-  if (/^688/.test(symbol))       return '科创板'
-  if (/\.BJ$/.test(symbol))      return '北交所'
-  if (/^60[0135]/.test(symbol))  return '沪主板'
-  if (/^00[012]/.test(symbol))   return '深主板'
-  return null
-}
 
 // ===== 换手率分档色（卡片/表格用） =====
 
@@ -72,7 +57,7 @@ function renderExtValue(
     return <span className="tabular-nums">{displayVal}</span>
   }
   if (typeof val === 'boolean') {
-    return <span className={val ? 'text-bull' : 'text-muted'}>{val ? '是' : '否'}</span>
+    return <span className={val ? 'text-success' : 'text-muted'}>{val ? '是' : '否'}</span>
   }
 
   // String — 按 extDisplay 配置渲染
@@ -300,7 +285,7 @@ function StockSearchBox({
 // 自选页 symbol 列代码后的小圆点, 标识该标的正在被实时行情监控 (Free/低档按自选监控模式)。
 // 视觉: 内圈实心点 + 外圈 animate-ping 扩散晕, 语义=「在线/活动」。
 // 配色用 accent (电光蓝) 而非绿/红: 项目设计规范规定红绿仅用于价格/K线,
-// UI 状态用 accent, 避免与 A 股涨跌色混淆。
+// UI 状态用 accent, 避免与涨跌语义色混淆。
 // 全市场模式 (Starter+) 不显示 —— 全部都在监控, 标记无信息量。
 function RealtimeDot({ title = '实时监控中' }: { title?: string }) {
   return (
@@ -346,7 +331,6 @@ function StockCard({
   onToggleExpand: (key: string) => void
   isMonitored?: boolean
 }) {
-  const board = boardTag(r.symbol)
   const price = r.rt_price ?? r.close
   const pct = r.rt_pct ?? r.change_pct
   const name = r.rt_name ?? r.name
@@ -354,7 +338,7 @@ function StockCard({
   const isUp = (pct ?? 0) > 0
   const isDown = (pct ?? 0) < 0
 
-  // 动态背景渐变: 涨=红底, 跌=绿底, 平=无色
+  // 动态背景渐变: 涨=绿底, 跌=红底, 平=无色
   const bgGlow = isUp
     ? 'bg-gradient-to-br from-bull/[0.06] via-transparent to-bull/[0.02]'
     : isDown
@@ -408,14 +392,9 @@ function StockCard({
           {name && (
             <span className="text-xs text-secondary truncate">{name}</span>
           )}
-          {board && (
-            <span className={`shrink-0 inline-flex items-center justify-center px-1 h-[16px] rounded text-[9px] font-bold leading-none ${board.color}`}>
-              {board.label}
-            </span>
-          )}
-          {r.consecutive_limit_ups > 0 && (
-            <span className="shrink-0 inline-flex items-center justify-center px-1 h-[16px] rounded bg-danger/15 text-danger text-[9px] font-bold tabular-nums">
-              {r.consecutive_limit_ups === 1 ? '首板' : `${r.consecutive_limit_ups}连`}
+          {r.consecutive_up_days > 1 && (
+            <span className="shrink-0 inline-flex items-center justify-center px-1 h-[16px] rounded bg-bull/15 text-bull text-[9px] font-bold tabular-nums">
+              {`${r.consecutive_up_days}连涨`}
             </span>
           )}
           {isMonitored && <span className="ml-auto"><RealtimeDot /></span>}
@@ -665,26 +644,6 @@ export function Watchlist() {
   const [filterOpen, setFilterOpen] = useState(false)
   const [filters, setFilters] = useState<Record<string, { min?: string; max?: string; text?: string }>>({})
 
-  // 板块筛选（持久化）
-  const [boardFilter, setBoardFilter] = useState<Set<string>>(() => {
-    const saved = storage.watchlistBoardFilter.get([])
-    return saved.length > 0 ? new Set(saved) : new Set(BOARDS) // 默认全选
-  })
-  const persistBoardFilter = useCallback((next: Set<string>) => {
-    setBoardFilter(next)
-    storage.watchlistBoardFilter.set([...next])
-  }, [])
-
-  const toggleBoard = useCallback((board: string) => {
-    setBoardFilter(prev => {
-      const next = new Set(prev)
-      if (next.has(board)) next.delete(board)
-      else next.add(board)
-      persistBoardFilter(next)
-      return next
-    })
-  }, [persistBoardFilter])
-
   const updateFilter = useCallback((colId: string, patch: { min?: string; max?: string; text?: string }) => {
     setFilters(prev => {
       const next = { ...prev }
@@ -722,14 +681,7 @@ export function Watchlist() {
 
   // 筛选 + 排序
   const filteredRows = useMemo(() => {
-    // 板块筛选（全选时跳过）
     let result = rows
-    if (boardFilter.size > 0 && boardFilter.size < BOARDS.length) {
-      result = result.filter(r => {
-        const board = getBoardType(r.symbol)
-        return board != null && boardFilter.has(board)
-      })
-    }
     // 数值/文本筛选
     const activeFilters = Object.entries(filters).filter(([, v]) => v.min || v.max || v.text)
     if (activeFilters.length > 0) {
@@ -750,7 +702,7 @@ export function Watchlist() {
       })
     }
     return result
-  }, [rows, filters, columns, boardFilter])
+  }, [rows, filters, columns])
 
   const activeFilterCount = Object.values(filters).filter(v => v.min || v.max || v.text).length
 
@@ -860,28 +812,6 @@ export function Watchlist() {
       {/* 筛选栏 */}
       {filterOpen && (
         <div className="px-5 py-2 border-b border-border bg-surface/50 max-h-[184px] overflow-y-auto">
-          {/* 板块筛选 */}
-          <div className="mb-2">
-            <div className="text-[10px] text-muted uppercase tracking-wider mb-0.5">板块</div>
-            <div className="flex flex-wrap gap-1">
-              {BOARDS.map(board => {
-                const active = boardFilter.has(board)
-                return (
-                  <button
-                    key={board}
-                    onClick={() => toggleBoard(board)}
-                    className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
-                      active
-                        ? 'bg-accent/15 text-accent'
-                        : 'bg-elevated text-secondary hover:text-foreground hover:bg-elevated/80'
-                    }`}
-                  >
-                    {board}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
           {COLUMN_GROUPS.map(cat => {
             const items = colsByCategory[cat.label]?.filter(i => i.col)
             if (!items?.length) return null
@@ -986,7 +916,6 @@ export function Watchlist() {
                 const name = r.rt_name ?? r.name
                 // 自选页 symbol 列：预览 + 内嵌删除（减号图标，二次确认）
                 if (key === 'symbol') {
-                  const board = boardTag(r.symbol)
                   return (
                     <td className="px-1.5 py-1.5">
                       <div className="flex items-center gap-1 w-full">
@@ -1003,11 +932,6 @@ export function Watchlist() {
                               {name}
                             </span>
                           )}
-                          {board ? (
-                            <span className={`shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded text-[9px] font-bold leading-none border ${board.color}`}>
-                              {board.label}
-                            </span>
-                          ) : null}
                           {monitoredSymbols.has(r.symbol) && <span className="ml-2"><RealtimeDot /></span>}
                         </button>
                         {/* 删除入口：默认减号图标，二次确认时替换为确定按钮 */}

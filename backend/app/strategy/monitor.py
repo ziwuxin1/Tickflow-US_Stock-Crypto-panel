@@ -34,8 +34,6 @@ _SIGNAL_CN: dict[str, str] = {
     "signal_ma20_breakdown": "跌破MA20", "signal_n_day_high": "60日新高",
     "signal_n_day_low": "60日新低", "signal_boll_breakout_upper": "突破布林上轨",
     "signal_boll_breakdown_lower": "跌破布林下轨", "signal_volume_surge": "放量",
-    "signal_limit_up": "涨停", "signal_limit_down": "跌停",
-    "signal_limit_down_recovery": "跌停翘板", "signal_broken_limit_up": "炸板",
     # 行情字段
     "close": "收盘价", "open": "开盘价", "high": "最高价", "low": "最低价",
     "change_pct": "涨跌幅", "change_amount": "涨跌额", "amplitude": "振幅",
@@ -54,7 +52,7 @@ _SIGNAL_CN: dict[str, str] = {
     "high_60d": "60日最高", "low_60d": "60日最低",
     "momentum_5d": "5日动量", "momentum_20d": "20日动量", "momentum_60d": "60日动量",
     "atr_14": "ATR14", "annual_vol_20d": "20日年化波动",
-    "consecutive_limit_ups": "连板数", "consecutive_limit_downs": "跌停连板",
+    "consecutive_up_days": "连涨天数",
 }
 
 

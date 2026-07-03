@@ -93,7 +93,7 @@ export function MinuteSyncConfig({ caps, isRunning, onStart }: { caps: { label: 
       </div>
 
       <div className="text-[10px] text-muted">
-        A股标的 · 原始数据存储(查询时实时复权)
+        美股标的 · 原始数据存储(查询时实时复权)
       </div>
     </div>
   )

@@ -73,7 +73,7 @@ export function StockFinancialSearch({ onSelect }: Props) {
         <input
           ref={inputRef}
           type="text"
-          placeholder="输入股票代码或名称，如 600000 / 浦发"
+          placeholder="输入股票代码或名称，如 AAPL / 苹果"
           value={query}
           onChange={(e) => { setQuery(e.target.value); setOpen(true); setActiveIdx(-1) }}
           onFocus={() => { if (trimmed) setOpen(true) }}

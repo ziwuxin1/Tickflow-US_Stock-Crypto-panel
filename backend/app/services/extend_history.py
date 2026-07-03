@@ -21,14 +21,13 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta
 
 from app.services import kline_sync
-from app.services.pipeline_jobs import job_store
 from app.tickflow.capabilities import Cap, CapabilitySet
 from app.tickflow.repository import KlineRepository
 
 logger = logging.getLogger(__name__)
 
 
-def _noop(stage: str, pct: int, msg: str, **kwargs) -> None:  # noqa: ARG001
+def _noop(stage: str, pct: int, msg: str, **kwargs) -> None:
     pass
 
 
@@ -38,20 +37,23 @@ def _invalidate(table: str | None = None) -> None:
 
 
 def _resolve_universe(capset: CapabilitySet) -> list[str]:
-    """解析标的池 — 与 daily_pipeline 独立的副本。"""
+    """解析标的池 — 与 daily_pipeline 独立的副本(美股 + 加密混合)。"""
     if capset.has(Cap.KLINE_DAILY_BATCH):
         try:
             from app.tickflow.pools import get_pool
-            all_a = get_pool("CN_Equity_A", refresh=True)
-            if all_a:
-                return sorted(all_a)
+            all_us = get_pool("US_Equity", refresh=True)
+            if all_us:
+                return sorted(set(all_us) | set(get_pool("Crypto")))
         except Exception as e:
-            logger.warning("CN_Equity_A pool unavailable: %s", e)
+            logger.warning("US_Equity pool unavailable: %s", e)
 
-    from app.tickflow.pools import DEMO_SYMBOLS, get_pool as _get_pool
-    from app.config import settings
     from pathlib import Path
+
     import polars as pl
+
+    from app.config import settings
+    from app.tickflow.pools import DEMO_SYMBOLS
+    from app.tickflow.pools import get_pool as _get_pool
     base: set[str] = set(DEMO_SYMBOLS)
     base.update(_get_pool("watchlist"))
     d = Path(settings.data_dir)
@@ -129,11 +131,14 @@ def run_extend_history(
     if new_start >= earliest:
         return {"error": "扩展范围无效,请增大时间跨度"}
 
-    # 2. 解析标的池
+    # 2. 解析标的池(美股走 TickFlow, 加密走 Binance)
     emit("extend_history", 5, "解析标的池…")
+    from app import markets
     universe = _resolve_universe(capset)
     if not universe:
         return {"error": "标的池为空"}
+    stock_universe = [s for s in universe if not markets.is_crypto(s)]
+    crypto_universe = [s for s in universe if markets.is_crypto(s)]
     emit("extend_history", 8, f"标的池: {len(universe)} 只")
 
     start_str = new_start.strftime("%Y-%m-%d")
@@ -144,15 +149,28 @@ def run_extend_history(
     logger.info("extend_history: daily K [%s ~ %s], %d symbols", start_str, end_str, len(universe))
 
     def _daily_chunk(cur: int, tot: int) -> None:
-        emit("extend_history", 10 + int(35 * cur / tot),
+        emit("extend_history", 10 + int(30 * cur / tot),
              f"日K 批次 {cur}/{tot}", stage_pct=int(100 * cur / tot), skip_log=True)
 
     written_daily = kline_sync.sync_and_persist_daily_batch(
-        universe, repo, capset,
+        stock_universe, repo, capset,
         start_date=datetime.combine(new_start, datetime.min.time()),
         end_date=datetime.combine(earliest, datetime.min.time()),
         on_chunk_done=_daily_chunk,
     )
+
+    # 3b. 加密日 K(Binance, 免 key 无门槛)
+    if crypto_universe:
+        emit("extend_history", 40, f"获取加密日K [{start_str} ~ {end_str}]…")
+        try:
+            written_daily += kline_sync.sync_crypto_daily(
+                crypto_universe, repo,
+                start_date=datetime.combine(new_start, datetime.min.time()),
+                end_date=datetime.combine(earliest, datetime.min.time()),
+            )
+        except Exception as e:
+            logger.warning("extend_history: crypto daily failed: %s", e)
+
     emit("extend_history", 45, f"日K 完成,写入 {written_daily} 行")
     logger.info("extend_history: daily K done, %d rows", written_daily)
     _refresh_single_view(repo, "kline_daily")
@@ -174,7 +192,7 @@ def run_extend_history(
                  f"除权因子批次 {cur}/{tot}", stage_pct=int(100 * cur / tot), skip_log=True)
 
         written_adj, _affected = kline_sync.sync_adj_factor(
-            universe, repo, capset,
+            stock_universe, repo, capset,
             start_time=adj_start, end_time=adj_end,
             on_chunk_done=_adj_chunk,
         )
@@ -191,7 +209,7 @@ def run_extend_history(
     logger.info("extend_history: full enriched rebuild start")
 
     from app.indicators.pipeline import run_pipeline
-    written_enriched = run_pipeline()
+    run_pipeline()
 
     enriched_dir = repo.store.data_dir / "kline_daily_enriched"
     enriched_days = len(list(enriched_dir.glob("date=*"))) if enriched_dir.exists() else 0

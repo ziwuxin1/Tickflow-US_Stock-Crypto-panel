@@ -75,6 +75,21 @@ class Settings(BaseSettings):
     # TickFlow
     tickflow_api_key: str = Field(default="", description="留空启用 free 模式")
 
+    # 美股数据源: tickflow(默认, 免 key 有全市场历史日 K) | yfinance(Yahoo, 免 key,
+    # 近实时报价 + 更即时日 K, 适合按需/自选, 大批量会被 Yahoo 限流)
+    us_data_source: str = "tickflow"
+
+    # Crypto(Binance 公共行情, 免 key)
+    # api.binance.com 部分地区被 451 屏蔽, 默认走 data-api.binance.vision
+    crypto_api_base: str = "https://data-api.binance.vision"
+    # 加密 universe 规模: 按 24h 成交额取前 N 个 USDT 现货交易对
+    crypto_universe_size: int = 300
+
+    # CoinGecko(加密市值/流通量/排名, 补 Binance 没有的维度; 免 key 可用)
+    # 用于给加密 instruments 填 total_shares/float_shares → 市值筛选/换手率生效
+    coingecko_api_base: str = "https://api.coingecko.com/api/v3"
+    coingecko_api_key: str = ""  # 留空 = 公共档(~30次/分); 可填 Demo/Pro key 提额
+
     # AI
     ai_provider: str = "openai_compat"
     ai_base_url: str = "https://api.alysc.top"
@@ -111,9 +126,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _resolve_paths(self) -> Settings:
-        """确保 data_dir 是绝对路径（环境变量传入的相对路径基于项目根目录解析）。"""
+        """确保 data_dir 是绝对路径(环境变量传入的相对路径基于项目根目录解析)。"""
         if not self.data_dir.is_absolute():
-            # 相对路径基于项目根目录解析，而非 CWD
+            # 相对路径基于项目根目录解析,而非 CWD
             self.data_dir = (_PROJECT_ROOT / self.data_dir).resolve()
         return self
 

@@ -22,7 +22,6 @@ from app.services.ext_data import (
     ensure_utf8_csv,
     fix_symbol_format,
     normalize_symbol,
-    parse_upload_file,
     write_ext_parquet,
     rows_to_parquet,
 )
@@ -112,14 +111,14 @@ def _apply_mapping(df: pl.DataFrame, config: ExtConfig, data_dir: Path) -> pl.Da
     # --- 第二步：computed 类型，从已生成的列计算 ---
     if "symbol" not in df.columns and sm.get("type") == "computed":
         if sm.get("from") == "code" and "code" in df.columns:
-            # code → symbol: 000001 → 000001.SZ
+            # code → symbol: AAPL → AAPL.US
             from app.services.ext_data import build_code_lookup
             lookup = build_code_lookup(data_dir)
             df = df.with_columns(normalize_symbol(df["code"].cast(pl.Utf8), lookup).alias("symbol"))
 
     if "code" not in df.columns and cm.get("type") == "computed":
         if cm.get("from") == "symbol" and "symbol" in df.columns:
-            # symbol → code: 000001.SZ → 000001
+            # symbol → code: AAPL.US → AAPL
             df = df.with_columns(
                 df["symbol"].cast(pl.Utf8).str.split(".").list.first().alias("code")
             )
@@ -323,27 +322,6 @@ def list_configs(request: Request):
         d["date_range"] = _date_range(c, data_dir)
         items.append(d)
     return {"items": items}
-
-
-@router.post("/presets/{config_id}/fetch")
-async def fetch_preset_data(request: Request, config_id: str):
-    """手动触发内置预设 (概念/行业) 的数据拉取。
-
-    注意: 必须在 /{config_id}/... 动态路由之前声明, 否则 'presets' 会被当成 config_id。
-    与通用 pull/run 不同: 走 ext_presets 的结构转换 (接口的 concepts/industries
-    数组 → 拼接成字符串), 保证 schema 与现有数据一致。
-    """
-    from app.services.ext_presets import fetch_preset
-
-    try:
-        n = await fetch_preset(config_id, _data_dir(request))
-    except ValueError as e:
-        raise HTTPException(404, str(e)) from e
-    except Exception as e:
-        raise HTTPException(400, f"拉取失败: {e}") from e
-
-    _refresh_views(request)
-    return {"status": "ok", "rows": n}
 
 
 @router.post("")
@@ -699,8 +677,8 @@ async def detect_fields(
 ):
     """上传 CSV/Excel 文件，自动检测列名和类型。
 
-    返回 symbol_candidates（数据匹配 000001.SZ 格式的列）和
-    code_candidates（数据匹配 6位纯数字的列）。
+    返回 symbol_candidates（数据匹配 AAPL.US / BTCUSDT 格式的列）和
+    code_candidates（数据匹配纯代码如 AAPL 格式的列）。
     """
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in (".csv", ".xlsx", ".xls"):
@@ -737,20 +715,24 @@ async def detect_fields(
         dtype = _POLARS_TYPE_MAP.get(str(pl_type.base_type()), "string")
         fields.append({"name": col_name, "dtype": dtype, "label": col_name})
 
-    # --- 分别检测 symbol 候选 (000001.SZ) 和 code 候选 (6位纯数字) ---
+    # --- 分别检测 symbol 候选 (AAPL.US / BTCUSDT) 和 code 候选 (AAPL 纯代码) ---
     import re
-    _CODE_PAT = re.compile(r"^\d{6}$")
-    _SYMBOL_PAT = re.compile(r"^\d{6}\.[A-Z]{2}$")
+    _CODE_PAT = re.compile(r"^[A-Z][A-Z0-9\-]{0,9}$")          # 美股纯代码, 如 AAPL / BRK-B
+    _US_SYMBOL_PAT = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}\.US$")  # 美股 symbol, 如 AAPL.US
+    _CRYPTO_SYMBOL_PAT = re.compile(r"^[A-Z0-9]{2,15}USDT$")     # 加密交易对, 如 BTCUSDT
 
-    symbol_candidates: list[str] = []   # 数据匹配 000001.SZ 格式
-    code_candidates: list[str] = []     # 数据匹配 000001 格式
+    symbol_candidates: list[str] = []   # 数据匹配 AAPL.US / BTCUSDT 格式
+    code_candidates: list[str] = []     # 数据匹配 AAPL 格式
 
     for col in df.columns:
         col_data = df[col].cast(pl.Utf8).drop_nulls()
         if len(col_data) == 0:
             continue
         sample = col_data.head(200).to_list()
-        sym_hits = sum(1 for v in sample if _SYMBOL_PAT.match(str(v).strip()))
+        sym_hits = sum(
+            1 for v in sample
+            if _US_SYMBOL_PAT.match(str(v).strip()) or _CRYPTO_SYMBOL_PAT.match(str(v).strip())
+        )
         code_hits = sum(1 for v in sample if _CODE_PAT.match(str(v).strip()))
         total = len(sample)
         if total > 0:

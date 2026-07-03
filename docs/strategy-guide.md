@@ -1,6 +1,8 @@
 # 策略开发指南
 
 本文档是策略开发的完整参考。人类开发者参考它编写策略，AI 读取它生成策略代码。
+适用市场：**美股**（symbol 形如 `AAPL.US`）与**加密货币**（symbol 形如 `BTCUSDT`，Binance USDT 现货）。
+两类资产共用同一套 enriched 数据与策略引擎，策略默认对两类资产同时生效。
 
 ## 1. 策略文件格式
 
@@ -22,14 +24,13 @@ META = {
     "description": "策略详细描述",     # 一句话说明策略逻辑
     "tags": ["标签1", "标签2"],        # 分类标签
 
-    # 基础过滤参数 (Stage 1, 引擎统一处理)
+    # 基础过滤参数 (Stage 1, 引擎统一处理, 单位均为美元 USD)
+    # 对加密货币缺失的字段(如市值)自动放行, 不会误杀
     "basic_filter": {
-        "price_min": 5,               # 最低价格
-        "price_max": 200,             # 最高价格
-        "market_cap_min": 20e8,       # 最小总市值 (元)
-        "amount_min": 1e8,            # 最小成交额 (元)
-        "exclude_st": True,           # 排除 ST/*ST/退市
-        "exclude_new_days": 60,       # 排除上市N天内新股
+        "price_min": 1.0,             # 最低价格 (USD)
+        "price_max": 10000,           # 最高价格 (USD, 可选)
+        "market_cap_min": 1e8,        # 最小总市值 (USD, 仅对美股生效)
+        "amount_min": 5e6,            # 最小成交额 (USD)
     },
 
     # 策略参数 (只把用户可能调节的阈值放这里，公式常数不必参数化)
@@ -88,8 +89,8 @@ def filter(df: pl.DataFrame, params: dict) -> pl.Expr:
 
 普通 `filter()` 只接收当前日期的单日数据。当策略需要以下逻辑时，必须使用 `filter_history()`：
 
-- "最近 N 天内出现过某个事件"（如涨停、金叉）
-- "某个事件发生后的第 X 天"（如涨停后放量下跌）
+- "最近 N 天内出现过某个事件"（如金叉、放量突破）
+- "某个事件发生后的第 X 天"（如突破新高后缩量回踩）
 - "前高 / 前低 / 上次某事件的价格"等需要回溯历史的自定义字段
 - 任何需要多日数据才能计算的时序逻辑
 
@@ -99,7 +100,7 @@ def filter(df: pl.DataFrame, params: dict) -> pl.Expr:
 LOOKBACK_DAYS = 8  # 回看交易日数，根据策略需要设置
 
 def filter_history(df: pl.DataFrame, params: dict) -> pl.DataFrame:
-    """df 包含目标日期之前 LOOKBACK_DAYS 个交易日的数据（所有股票混合）。
+    """df 包含目标日期之前 LOOKBACK_DAYS 个交易日的数据（所有标的混合）。
     每行包含 symbol, date 及所有指标列/信号列。
 
     返回值: 筛选后的 DataFrame。
@@ -150,19 +151,19 @@ def filter_history(df: pl.DataFrame, params: dict) -> pl.DataFrame:
 
 | 列名 | 类型 | 说明 |
 |------|------|------|
-| symbol | string | 股票代码 (如 600519.SH) |
-| date | date | 交易日期 |
+| symbol | string | 标的代码 (美股如 AAPL.US，加密如 BTCUSDT) |
+| date | date | 交易日期 (美股为美东交易日，加密为 UTC 日期) |
 
 ### 价格相关
 
 | 列名 | 类型 | 说明 |
 |------|------|------|
-| open, high, low, close | float | OHLCV 开高低收 (前复权) |
-| raw_close, raw_high, raw_low | float | 原始未复权价 |
+| open, high, low, close | float | OHLCV 开高低收 (美股前复权；加密无复权，等于原始价) |
+| raw_close, raw_high, raw_low | float | 原始未复权价 (加密与复权价相同) |
 | prev_close | float | 昨收价 |
 | change_pct | float | 涨跌幅 (如 0.032 = +3.2%) |
 | change_amount | float | 涨跌额 |
-| amount | float | 成交额 |
+| amount | float | 成交额 (USD) |
 | amplitude | float | 振幅 |
 
 ### 均线
@@ -188,10 +189,10 @@ def filter_history(df: pl.DataFrame, params: dict) -> pl.DataFrame:
 
 | 列名 | 说明 |
 |------|------|
-| volume | 成交量 |
+| volume | 成交量 (单位: 股 / 币，非"手") |
 | vol_ma5, vol_ma10 | 成交量均线 |
 | vol_ratio_5d | 5日量比 |
-| turnover_rate | 换手率 |
+| turnover_rate | 换手率 (volume / float_shares × 100，仅美股；加密为 null) |
 
 ### 动量与波动
 
@@ -200,23 +201,18 @@ def filter_history(df: pl.DataFrame, params: dict) -> pl.DataFrame:
 | momentum_5d / 10d / 20d / 30d / 60d | N日涨幅 |
 | annual_vol_20d | 20日年化波动率 |
 | high_60d, low_60d | 60日最高/最低价 |
-
-### 涨跌停
-
-| 列名 | 说明 |
-|------|------|
-| consecutive_limit_ups | 连续涨停天数 |
-| consecutive_limit_downs | 连续跌停天数 |
+| consecutive_up_days | 连续收涨天数 (change_pct > 0 的连续计数) |
 
 ### 运行时附加列（由引擎从 instruments 表 JOIN）
 
 | 列名 | 说明 |
 |------|------|
-| name | 股票名称 |
-| total_shares | 总股本 |
-| float_shares | 流通股本 |
+| name | 标的名称 (美股为公司名，加密如 BTC/USDT) |
+| total_shares | 总股本 (仅美股；加密为 null) |
+| float_shares | 流通股本 (仅美股；加密为 null) |
 
-（`total_shares` 和 `float_shares` 用于 `basic_filter` 中计算市值：`close * total_shares`）
+（`total_shares` 和 `float_shares` 用于 `basic_filter` 中计算市值：`close * total_shares`。
+加密货币无股本数据，基础过滤中的市值/换手条件对其自动放行。）
 
 ## 4. 常用信号列（参考）
 
@@ -236,12 +232,9 @@ def filter_history(df: pl.DataFrame, params: dict) -> pl.DataFrame:
 | signal_boll_breakout_upper | 中性 | 突破布林上轨 |
 | signal_boll_breakdown_lower | 中性 | 跌破布林下轨 |
 | signal_volume_surge | 中性 | 放量 |
-| signal_limit_up | 买入 | 涨停 (依赖 instruments 表，部分环境不生成) |
-| signal_limit_down | 卖出 | 跌停 (依赖 instruments 表，部分环境不生成) |
-| signal_limit_down_recovery | 买入 | 跌停翘板 (依赖 instruments 表，部分环境不生成) |
-| signal_broken_limit_up | 卖出 | 炸板 (依赖 instruments 表，部分环境不生成) |
 
-> **注意**：涨跌停类信号需要 instruments 表（板块代码）才能计算。如果策略只用涨停判断，优先用 `consecutive_limit_ups >= 1`（稳定列，始终可用）。
+> **注意**：如果策略需要"连续大涨/强势"判断，用 `consecutive_up_days >= N`（稳定列，始终可用）
+> 配合 `change_pct` / `momentum_5d` 阈值组合，美股与加密均适用。
 
 此外，用户自定义信号（`data/user_data/custom_signals/`）以 `csg_` 前缀注入，也可在 filter() 中引用。
 
@@ -251,9 +244,9 @@ def filter_history(df: pl.DataFrame, params: dict) -> pl.DataFrame:
 
 | 数据 | 说明 |
 |------|------|
-| 财务数据 (PE/PB/ROE/净利润/营收/资产负债等) | 存储在独立 financials 表，未 JOIN |
-| 扩展数据 (概念/行业/人气排名/资金流向等) | 存储在 ext_data 目录，未 JOIN |
-| 盘中实时数据 (分时价/五档盘口等) | 仅前端轮询使用 |
+| 财务数据 (PE/PB/ROE/净利润/营收/资产负债等) | 存储在独立 financials 表，未 JOIN（仅美股可能有） |
+| 扩展数据 (行业分类/资金流向等第三方数据) | 存储在 ext_data 目录，未 JOIN |
+| 盘中实时数据 (分时价等) | 仅前端轮询使用 |
 
 如需财务或扩展数据作为筛选条件，需先在系统层面完成 JOIN 再提供给策略（当前未实现）。
 
@@ -263,10 +256,10 @@ def filter_history(df: pl.DataFrame, params: dict) -> pl.DataFrame:
 2. 信号列使用 `.fill_null(False)` 处理空值
 3. 用户可能调节的数值阈值通过 `params` 暴露；公式常数、固定窗口边界、一次性内部变量不必强行参数化
 4. `scoring` 权重总和必须为 1.0
-5. 遵循 A 股 T+1 规则 (当日买入次日才能卖出)
+5. 回测按**次日开盘价成交**以防未来函数（信号日收盘后确认，次日开盘买入/卖出）；加密货币 7×24 交易、无涨跌幅限制，同样遵循次日开盘成交口径
 6. 只允许 `import polars as pl`，禁止 import 其他模块
 7. 禁止使用 `open()`, `exec()`, `eval()`, `os`, `sys`, `subprocess`
-8. **贴合用户需求优先**：第3/4节的指标列和信号列仅供参考，能用则用；如果用户需求需要自定义计算（如"前高""上次涨停价""N日内某个事件后X天"），直接在 `filter_history()` 中自行设计和计算，不需要局限于已有列
+8. **贴合用户需求优先**：第3/4节的指标列和信号列仅供参考，能用则用；如果用户需求需要自定义计算（如"前高""上次突破价""N日内某个事件后X天"），直接在 `filter_history()` 中自行设计和计算，不需要局限于已有列
 9. `filter_history()` 中优先用 Polars 向量化语法；仅在复杂状态机无法清晰表达时，才用 `partition_by("symbol")` 逐股票分析
 
 ## 7. 策略示例
@@ -283,9 +276,8 @@ META = {
     "description": "前一日明显阴线下跌，今日放量阳线收复前一日阴线实体",
     "tags": ["反包", "短线", "放量"],
     "basic_filter": {
-        "price_min": 3, "price_max": 200,
-        "market_cap_min": 10e8, "amount_min": 0.5e8,
-        "exclude_st": True, "exclude_new_days": 30,
+        "price_min": 1.0, "price_max": 10000,
+        "market_cap_min": 1e8, "amount_min": 5e6,
     },
     "params": [
         {"id": "prev_down_pct", "label": "前日最大跌幅", "type": "float",
@@ -301,11 +293,11 @@ META = {
 
 LOOKBACK_DAYS = 2
 
-ENTRY_SIGNALS = ["signal_broken_board_recovery"]
+ENTRY_SIGNALS = ["signal_ma20_breakout"]
 EXIT_SIGNALS = ["signal_ma20_breakdown"]
 STOP_LOSS = -0.05
 MAX_HOLD_DAYS = 10
-ALERTS = [{"field": "signal_broken_board_recovery", "message": "反包信号"}]
+ALERTS = [{"field": "signal_ma20_breakout", "message": "反包突破信号"}]
 
 RULES = """
 1. 前一交易日为阴线，且跌幅不小于设定阈值
@@ -320,7 +312,6 @@ def filter_history(df: pl.DataFrame, params: dict) -> pl.DataFrame:
     down_pct = float(params.get("prev_down_pct", -0.02))
     vol_ratio = float(params.get("volume_ratio", 1.2))
     tolerance = float(params.get("reversal_tolerance", 0.005))
-    latest = df["date"].max()
     hist = (
         df.sort(["symbol", "date"])
         .with_columns([
@@ -344,4 +335,4 @@ def filter_history(df: pl.DataFrame, params: dict) -> pl.DataFrame:
 
 ## 8. 完整示例
 
-见 [strategy-example.md](./strategy-example.md) — 从零创建强势反包策略的三步完整演示。
+见 [strategy-example.md](./strategy-example.md) — 从零创建动量领涨策略的三步完整演示。

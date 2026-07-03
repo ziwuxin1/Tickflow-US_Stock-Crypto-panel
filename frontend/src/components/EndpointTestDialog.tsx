@@ -175,7 +175,7 @@ function EpRow({ ep, result, testing, isCurrent, isFree, canUsePremium, switchin
         isError
           ? 'border-danger/30 bg-danger/5'
           : result?.ok
-            ? 'border-bear/20 bg-bear/5'
+            ? 'border-success/20 bg-success/5'
             : isCurrent
               ? 'border-accent/20 bg-accent/5'
               : 'border-border bg-surface'
@@ -213,7 +213,7 @@ function EpRow({ ep, result, testing, isCurrent, isFree, canUsePremium, switchin
             ) : testing ? (
               <span className="text-[11px] text-muted animate-pulse">测试中…</span>
             ) : result && result.ok && median != null ? (
-              <span className={median < 500 ? 'text-bear' : median < 1000 ? 'text-warning' : 'text-danger'}>
+              <span className={median < 500 ? 'text-success' : median < 1000 ? 'text-warning' : 'text-danger'}>
                 {median} ms
               </span>
             ) : result && !result.ok ? (

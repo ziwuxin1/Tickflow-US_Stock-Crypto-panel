@@ -8,9 +8,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import polars as pl
 
@@ -163,7 +162,7 @@ def _refresh_financials_views(data_dir: Path) -> None:
         "financials_balance_sheet": f"{d}/financials/balance_sheet/*.parquet",
         "financials_cash_flow": f"{d}/financials/cash_flow/*.parquet",
     }
-    for name, path in views.items():
+    for name, _path in views.items():
         out = data_dir / "financials" / name.replace("financials_", "") / "part.parquet"
         if not out.exists():
             continue
@@ -180,6 +179,41 @@ def get_financial_df(data_dir: Path, table: str) -> pl.DataFrame:
         return pl.read_parquet(path)
     except Exception as e:
         logger.warning("读取 financials/%s 失败: %s", table, e)
+        return pl.DataFrame()
+
+
+def get_financial_df_for_symbol(data_dir: Path, table: str, symbol: str) -> pl.DataFrame:
+    """按 symbol 取单表财务数据: 优先本地 parquet, 空则对美股走 yfinance 免费源兜底。
+
+    免 key 场景下本地 parquet 通常为空(TickFlow 财务需付费档), 此时用 Yahoo 免费源
+    实时拉取该美股四表并取对应表, 保证「财务面板/AI 分析」在免 key 下也有真实数据。
+    加密标的无财务报表, 返回空 DataFrame。字段名与 yfinance_provider.fetch_us_financials 对齐。
+
+    table: metrics / income / balance_sheet / cash_flow
+    """
+    from app.markets import is_crypto
+
+    # 1. 优先本地 parquet(付费档同步产物)
+    df = get_financial_df(data_dir, table)
+    if not df.is_empty() and symbol:
+        local = df.filter(pl.col("symbol") == symbol)
+        if not local.is_empty():
+            return local
+
+    # 2. 加密无财务报表, 不兜底
+    if is_crypto(symbol):
+        return pl.DataFrame()
+
+    # 3. 美股: yfinance 免费源实时兜底
+    try:
+        from app.data_providers.yfinance_provider import fetch_us_financials
+        tables = fetch_us_financials(symbol)
+        records = tables.get(table, [])
+        if not records:
+            return pl.DataFrame()
+        return pl.DataFrame(records)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("yfinance 财务兜底 %s/%s 失败: %s", symbol, table, e)
         return pl.DataFrame()
 
 
@@ -201,7 +235,7 @@ class FinancialScheduler:
         self._is_syncing = False
 
     def start(self, data_dir: Path, capset: CapabilitySet, *, auto_schedule: bool = False) -> None:
-        """初始化调度器，并按需启动周期同步后台任务。
+        """初始化调度器,并按需启动周期同步后台任务。
 
         auto_schedule=False (默认): 仅初始化 (设置数据目录/能力 + 恢复 last_sync),
             供 /api/financials/sync/* 手动同步使用, 不启动自动调度。
@@ -227,14 +261,14 @@ class FinancialScheduler:
                     continue
                 parquet = data_dir / "financials" / table / "part.parquet"
                 if parquet.exists():
-                    mtime = datetime.fromtimestamp(parquet.stat().st_mtime, tz=timezone.utc).isoformat()
+                    mtime = datetime.fromtimestamp(parquet.stat().st_mtime, tz=UTC).isoformat()
                     restored[table] = mtime
                     preferences.set_financial_sync_time(table, mtime)
                     logger.info("FinancialScheduler backfilled last_sync for %s from parquet mtime", table)
             self._last_sync = restored
             if self._last_sync:
                 logger.info("FinancialScheduler restored last_sync: %s", list(self._last_sync.keys()))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("restore financial_sync_times failed: %s", e)
 
         if not auto_schedule:
@@ -252,12 +286,12 @@ class FinancialScheduler:
         持久化确保即使重启,前端 /status 仍返回真实的最后同步时间,
         不会错误地显示"尚未同步"。
         """
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(UTC).isoformat()
         self._last_sync[table] = ts
         try:
             from app.services import preferences
             preferences.set_financial_sync_time(table, ts)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("persist financial_sync_time(%s) failed: %s", e)
 
     def update_capabilities(self, capset: CapabilitySet) -> None:
@@ -384,7 +418,7 @@ class FinancialScheduler:
         def _bg() -> None:
             try:
                 self._run_body(table)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.exception("background financial sync failed: %s", e)
             finally:
                 with self._lock:

@@ -1,23 +1,26 @@
 """全局实时行情服务。
 
-集中管理全市场行情拉取 + enriched 缓存，供盘中选股、自选股等所有模块复用。
+集中管理全市场行情拉取 + enriched 缓存,供盘中选股、自选股等所有模块复用。
 
 架构:
-  - 后台线程轮询 TickFlow get_by_universes(["CN_Equity_A", "CN_Index"])
+  - 后台线程轮询: 美股走 TickFlow get_by_universes(["US_Equity"]),
+    加密走 Binance ticker/24hr(免 key, 一次调用全市场), 合并进同一条流水线
   - 拉取行情 → 写 kline_daily (不复权) + 增量计算 enriched → 写盘 + 更新缓存
   - _enriched_cache 是唯一的盘中数据源 (OHLCV + 全套技术指标)
   - _live_agg_cache 是递推状态 (只加载一次, 盘中不变)
 
 数据流 (每轮 ~15s):
   1. API 拉取 → raw_records (临时变量)
-  2. raw_records → 写 kline_daily (不复权原始价格)
+  2. raw_records → 写 kline_daily (不复权原始价格; 美股按美东交易日, 加密按 UTC 日)
   3. raw_records → 更新 _enriched_cache 的 OHLCV
   4. 增量计算 enriched 指标 (~50ms)
   5. 写 kline_daily_enriched + 替换 _enriched_cache
   6. 通知 SSE
 
+轮询时段: 美股时段拉美股+加密, 非美股时段仅拉加密(7x24, 由 realtime_pull_crypto 控制)。
+
 生命周期:
-  - 服务启动时读取 preferences，若 enabled 则自动启动线程
+  - 服务启动时读取 preferences,若 enabled 则自动启动线程
   - 运行中可通过 API 切换开关
   - 关闭时停止线程
 """
@@ -26,9 +29,12 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import date, datetime, time as dt_time
+from datetime import date
+from typing import ClassVar
 
 import polars as pl
+
+from app import markets
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +42,10 @@ logger = logging.getLogger(__name__)
 class QuoteService:
     """全局实时行情服务 — 单例。"""
 
-    CORE_INDEX_SYMBOLS = ("000001.SH", "399001.SZ", "399006.SZ", "000680.SH")
+    CORE_INDEX_SYMBOLS = markets.CORE_INDEX_SYMBOLS
 
     # 档位 → 最小轮询间隔 (秒)
-    TIER_MIN_INTERVAL = {
+    TIER_MIN_INTERVAL: ClassVar[dict[str, float]] = {
         "expert": 1.0,
         "pro": 2.0,
         "starter": 3.0,
@@ -57,7 +63,6 @@ class QuoteService:
         self._repo = None          # 延迟注入, 避免循环导入
         self._update_event = threading.Event()  # SSE 通知: 行情更新后 set
         self._alert_event = threading.Event()   # SSE 通知: 有告警时 set
-        self._depth_update_event = threading.Event()  # SSE 通知: depth 五档修正后 set (刷新连板梯队)
         self._pending_alerts: list[dict] = []    # 待推送的告警
         self._max_pending_alerts: int = 1000     # 背压上限: 超出丢弃最旧
         # 复盘进度 SSE 通道: 定时复盘流式生成时, 把 meta/delta/done 事件推给开着页面的前端
@@ -106,7 +111,7 @@ class QuoteService:
         logger.info("行情服务已停止")
 
     def enable(self) -> bool:
-        """开启自动行情 (不立即启动线程，等下一个交易时段)。
+        """开启自动行情 (不立即启动线程,等下一个交易时段)。
 
         none 档无实时行情权限,拒绝开启并返回 False;
         free 档开启自选股实时,starter+ 开启全市场实时。返回值表示是否真正开启。
@@ -130,7 +135,7 @@ class QuoteService:
         logger.info("行情服务已关闭")
 
     def boot_check(self) -> None:
-        """启动时检查 preferences，若 enabled 则自动启动。
+        """启动时检查 preferences,若 enabled 则自动启动。
 
         none 档无实时行情权限:即使 preferences 标记为 enabled,
         也不启动,并同步 preferences 为关闭(避免 UI 误显示已开启)。
@@ -153,7 +158,7 @@ class QuoteService:
         self._app_state = app_state
 
     def set_interval(self, interval: float) -> float:
-        """运行时更新轮询间隔（立即生效）。"""
+        """运行时更新轮询间隔(立即生效)。"""
         clamped = self._clamp_interval(interval)
         self._interval = clamped
         from app.services import preferences
@@ -174,18 +179,6 @@ class QuoteService:
         """阻塞等待告警 (供 SSE 线程使用)。"""
         self._alert_event.clear()
         return self._alert_event.wait(timeout=timeout)
-
-    def notify_depth_updated(self) -> None:
-        """五档盘口修正完成后调用: 通知 SSE 推送 depth_updated, 触发连板梯队刷新。
-
-        与行情/告警通道独立 — 只刷新连板梯队, 不连带刷新 watchlist 等。
-        """
-        self._depth_update_event.set()
-
-    def wait_for_depth_update(self, timeout: float = 30.0) -> bool:
-        """阻塞等待 depth 修正 (供 SSE 线程使用)。"""
-        self._depth_update_event.clear()
-        return self._depth_update_event.wait(timeout=timeout)
 
     def pop_alerts(self) -> list[dict]:
         """取走所有待推送的告警 (线程安全)。"""
@@ -228,7 +221,7 @@ class QuoteService:
 
     @staticmethod
     def _current_tier() -> str:
-        """获取当前档位名（小写）。"""
+        """获取当前档位名(小写)。"""
         from app.tickflow.policy import tier_label
         return tier_label().split()[0].split("+")[0].strip().lower()
 
@@ -244,8 +237,22 @@ class QuoteService:
 
     @classmethod
     def is_realtime_allowed(cls) -> bool:
-        """当前档位是否允许使用实时行情。"""
-        return cls.realtime_mode() != "none"
+        """当前是否允许使用实时行情。
+
+        TickFlow 档位非 none 即允许; none 档(无 key)仍可拉加密实时(Binance 免 key)。
+        """
+        if cls.realtime_mode() != "none":
+            return True
+        return cls._crypto_realtime_enabled()
+
+    @staticmethod
+    def _crypto_realtime_enabled() -> bool:
+        """加密实时开关(preferences.realtime_pull_crypto, 默认 True)。"""
+        try:
+            from app.services import preferences
+            return bool(preferences.get_realtime_pull_crypto())
+        except Exception:
+            return True
 
     @classmethod
     def _tier_min_interval(cls) -> float:
@@ -321,8 +328,15 @@ class QuoteService:
         }
 
     def refresh(self) -> dict:
-        """手动触发一次行情拉取。"""
-        self._fetch_quotes()
+        """手动触发一次行情拉取(不受美股时段限制)。"""
+        mode = self.realtime_mode()
+        include_crypto = self._crypto_realtime_enabled()
+        if mode == "watchlist":
+            self._fetch_watchlist_quotes(include_us=True, include_crypto=include_crypto)
+        elif mode == "full_market":
+            self._fetch_full_market_quotes(include_us=True, include_crypto=include_crypto)
+        elif include_crypto:
+            self._fetch_full_market_quotes(include_us=False, include_crypto=True)
         return self.status()
 
     # ================================================================
@@ -332,11 +346,8 @@ class QuoteService:
     def _poll_loop(self) -> None:
         while self._running and self._enabled:
             try:
-                if self._is_trading_hours():
-                    self._fetch_quotes()
-                else:
-                    logger.debug("非交易时段, 跳过行情轮询")
-            except Exception as e:  # noqa: BLE001
+                self._fetch_quotes()
+            except Exception as e:
                 logger.warning("行情轮询异常: %s", e)
 
             waited = 0.0
@@ -345,91 +356,80 @@ class QuoteService:
                 waited += 0.5
 
     def _fetch_quotes(self) -> None:
-        """按当前档位拉取行情。"""
-        if self.realtime_mode() == "watchlist":
-            self._fetch_watchlist_quotes()
-            return
-        self._fetch_full_market_quotes()
+        """按当前档位与市场时段拉取行情。
 
-    def _fetch_full_market_quotes(self) -> None:
-        """拉取全市场行情 → 写 daily + 计算 enriched + 更新缓存。"""
-        from app.tickflow.client import get_paid_realtime_client
-
-        tf = get_paid_realtime_client()
-        if tf is None:
-            logger.warning("实时行情拉取失败:未配置付费服务器 API Key")
+        美股时段拉美股+加密; 非美股时段仅拉加密(7x24)。
+        """
+        mode = self.realtime_mode()
+        include_us = markets.is_us_trading_hours() and mode != "none"
+        include_crypto = self._crypto_realtime_enabled()
+        if not include_us and not include_crypto:
+            logger.debug("非美股交易时段且加密实时关闭, 跳过行情轮询")
             return
+        if mode == "watchlist":
+            self._fetch_watchlist_quotes(include_us=include_us, include_crypto=include_crypto)
+            return
+        self._fetch_full_market_quotes(include_us=include_us, include_crypto=include_crypto)
+
+    def _fetch_full_market_quotes(self, include_us: bool = True, include_crypto: bool = True) -> None:
+        """拉取全市场行情(美股 TickFlow + 加密 Binance) → 写 daily + enriched + 缓存。"""
+        from app.services import preferences
+
         t0 = time.perf_counter()
         now_ts = time.perf_counter()
 
-        try:
-            from app.services import preferences
-            all_index_symbols = set(self._repo.get_index_symbol_set()) if self._repo else set()
-            core_index_symbols = set(preferences.get_realtime_index_symbols() or self.CORE_INDEX_SYMBOLS)
-            all_index_symbols.update(core_index_symbols)
-            all_etf_symbols = set()
-            if self._repo:
-                etf_inst = self._repo.get_etf_instruments()
-                if not etf_inst.is_empty() and "symbol" in etf_inst.columns:
-                    all_etf_symbols = set(etf_inst["symbol"].cast(pl.Utf8).to_list())
+        all_index_symbols = set(self._repo.get_index_symbol_set()) if self._repo else set()
+        core_index_symbols = set(preferences.get_realtime_index_symbols() or self.CORE_INDEX_SYMBOLS)
+        all_index_symbols.update(core_index_symbols)
+        all_etf_symbols = set()
+        if self._repo:
+            etf_inst = self._repo.get_etf_instruments()
+            if not etf_inst.is_empty() and "symbol" in etf_inst.columns:
+                all_etf_symbols = set(etf_inst["symbol"].cast(pl.Utf8).to_list())
 
-            universes: list[str] = []
-            if preferences.get_realtime_pull_stock():
-                universes.append("CN_Equity_A")
-            if preferences.get_realtime_pull_etf() and all_etf_symbols:
-                universes.append("CN_ETF")
-            if preferences.get_realtime_pull_index() and preferences.get_realtime_index_mode() == "all":
-                universes.append("CN_Index")
+        # ---- 美股: TickFlow 付费实时端点 ----
+        resp = []
+        if include_us:
+            from app.tickflow.client import get_paid_realtime_client
 
-            resp = []
-            if universes:
-                resp.extend(tf.quotes.get_by_universes(universes=universes) or [])
-            if preferences.get_realtime_pull_index() and preferences.get_realtime_index_mode() == "core":
-                resp.extend(tf.quotes.get(symbols=sorted(core_index_symbols)) or [])
-        except Exception as e:  # noqa: BLE001
-            logger.warning("行情拉取失败: %s", e)
-            return
+            tf = get_paid_realtime_client()
+            if tf is None:
+                logger.warning("美股实时行情跳过:未配置付费服务器 API Key")
+            else:
+                try:
+                    if preferences.get_realtime_pull_stock():
+                        resp.extend(tf.quotes.get_by_universes(universes=["US_Equity"]) or [])
+                    if preferences.get_realtime_pull_index():
+                        # 大盘基准 ETF 代理(SPY/QQQ 等); 加密基准走 Binance, 不发给 TickFlow
+                        tickflow_core = sorted(s for s in core_index_symbols if not markets.is_crypto(s))
+                        if tickflow_core:
+                            resp.extend(tf.quotes.get(symbols=tickflow_core) or [])
+                except Exception as e:
+                    logger.warning("美股行情拉取失败: %s", e)
 
-        if not resp:
+        # ---- 加密: Binance 全市场 24h ticker(免 key) ----
+        crypto_records: list[dict] = []
+        if include_crypto:
+            crypto_records = self._fetch_crypto_records(self._known_crypto_symbols())
+
+        if not resp and not crypto_records:
             logger.warning("行情数据为空")
             return
 
         # ---- 解析 API 响应 (临时变量, 用完丢弃) ----
-        records = []
-        for q in resp:
-            ext = q.get("ext") or {}
-            last_price = q.get("last_price")
-            prev_close = q.get("prev_close")
-            change_amount = ext.get("change_amount")
-            change_pct = ext.get("change_pct")
-            if change_amount is None and last_price is not None and prev_close is not None:
-                change_amount = float(last_price) - float(prev_close)
-            if change_pct is None and change_amount is not None and prev_close not in (None, 0):
-                change_pct = float(change_amount) / float(prev_close) * 100
-            records.append({
-                "symbol": q.get("symbol"),
-                "name": q.get("name") or ext.get("name"),
-                "last_price": last_price,
-                "prev_close": prev_close,
-                "open": q.get("open"),
-                "high": q.get("high"),
-                "low": q.get("low"),
-                "volume": q.get("volume"),
-                "amount": q.get("amount"),
-                "change_pct": change_pct,
-                "change_amount": change_amount,
-                "amplitude": ext.get("amplitude"),
-                "turnover_rate": ext.get("turnover_rate"),
-                "timestamp": q.get("timestamp"),
-                "session": q.get("session"),
-            })
+        records = [self._parse_quote_record(q) for q in resp]
 
         index_records = [r for r in records if r.get("symbol") in all_index_symbols]
-        etf_records = [r for r in records if r.get("symbol") in all_etf_symbols]
+        etf_records = [
+            r for r in records
+            if r.get("symbol") in all_etf_symbols and r.get("symbol") not in all_index_symbols
+        ]
         stock_records = [
             r for r in records
             if r.get("symbol") not in all_index_symbols and r.get("symbol") not in all_etf_symbols
         ]
+        # 加密基准 (BTCUSDT/ETHUSDT) 额外进指数卡片缓存(百分数转小数, 与指数展示口径一致)
+        crypto_index_records = self._crypto_as_index_records(crypto_records, all_index_symbols)
 
         fetch_ms = (time.perf_counter() - t0) * 1000
         fetched_at = time.time() * 1000
@@ -439,35 +439,48 @@ class QuoteService:
             self._fetch_time = now_ts
             self._fetch_ms = fetch_ms
             self._fetched_at = fetched_at
-            self._symbol_count = len(stock_records)
-            self._index_symbol_count = len(index_records)
+            self._symbol_count = len(stock_records) + len(crypto_records)
+            self._index_symbol_count = len(index_records) + len(crypto_index_records)
             self._etf_symbol_count = len(etf_records)
-            self._index_quotes_cache = self._build_index_quotes(index_records)
+            self._index_quotes_cache = self._build_index_quotes(index_records + crypto_index_records)
 
-        logger.info("行情刷新: %d 只股票, %d 只ETF, %d 只指数, 耗时 %.0fms", len(stock_records), len(etf_records), len(index_records), fetch_ms)
+        logger.info("行情刷新: %d 只美股, %d 个加密, %d 只ETF, %d 个基准, 耗时 %.0fms",
+                    len(stock_records), len(crypto_records), len(etf_records),
+                    len(index_records) + len(crypto_index_records), fetch_ms)
 
-        # ---- 写 kline_daily (不复权原始价格, 只有 OHLCV) ----
-        daily_df = self._build_daily(stock_records)
+        # ---- 写 kline_daily (不复权原始价格; 美股按美东交易日, 加密按 UTC 日) ----
+        daily_df = self._build_daily(stock_records, markets.us_trading_date())
         if not daily_df.is_empty() and self._repo:
             try:
                 self._repo.flush_live_daily(daily_df)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning("日K写盘失败: %s", e)
 
-        etf_daily_df = self._build_daily(etf_records)
+        # 加密走 merge, 避免覆写同一分区里的美股行(反之亦然)
+        crypto_daily_df = self._build_daily(crypto_records, markets.crypto_trading_date())
+        if not crypto_daily_df.is_empty() and self._repo:
+            try:
+                self._repo.merge_live_daily_asset("stock", crypto_daily_df)
+            except Exception as e:
+                logger.warning("加密日K写盘失败: %s", e)
+
+        etf_daily_df = self._build_daily(etf_records, markets.us_trading_date())
         if not etf_daily_df.is_empty() and self._repo:
             try:
                 self._repo.flush_live_daily_asset("etf", etf_daily_df)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning("ETF 日K写盘失败: %s", e)
 
         # ---- 构建 API 直接值的补充表 (不写 daily, 只用于 enriched 计算) ----
         quote_extra = self._build_quote_extra(stock_records)
+        crypto_extra = self._build_quote_extra(crypto_records)
         etf_quote_extra = self._build_quote_extra(etf_records)
 
         # ---- 增量计算 enriched + 写盘 + 更新缓存 ----
         if not daily_df.is_empty() and self._repo:
             self._flush_live_enriched(daily_df, quote_extra, asset_type="stock")
+        if not crypto_daily_df.is_empty() and self._repo:
+            self._flush_live_enriched(crypto_daily_df, crypto_extra, asset_type="crypto", merge=True)
         if not etf_daily_df.is_empty() and self._repo:
             self._flush_live_enriched(etf_daily_df, etf_quote_extra, asset_type="etf")
 
@@ -477,61 +490,46 @@ class QuoteService:
         # ---- 策略监控 + 告警评估 ----
         self._evaluate_monitors(daily_df, quote_extra)
 
-    def _fetch_watchlist_quotes(self) -> None:
-        """Free 档自选股实时: 只拉取最多 5 个 symbols。"""
-        from app.services import preferences
-        from app.tickflow.client import get_paid_realtime_client
+    def _fetch_watchlist_quotes(self, include_us: bool = True, include_crypto: bool = True) -> None:
+        """Free 档自选实时: 美股取自选前 5 个(TickFlow 免费名额), 加密自选全量(不占名额)。"""
+        from app.tickflow.pools import get_pool
 
-        symbols = preferences.get_realtime_watchlist_symbols()
-        if not symbols:
+        try:
+            watchlist = [str(s).strip().upper() for s in get_pool("watchlist") if s]
+        except Exception as e:
+            logger.warning("读取自选失败: %s", e)
+            watchlist = []
+        if not watchlist:
             logger.info("自选实时未配置标的, 跳过行情拉取")
             return
 
-        tf = get_paid_realtime_client()
-        if tf is None:
-            logger.warning("自选实时拉取失败:未配置付费服务器 API Key")
-            return
+        stock_symbols = [s for s in watchlist if not markets.is_crypto(s)][:5]
+        crypto_symbols = [s for s in watchlist if markets.is_crypto(s)]
 
         t0 = time.perf_counter()
         now_ts = time.perf_counter()
-        try:
-            resp = tf.quotes.get(symbols=symbols) or []
-        except Exception as e:  # noqa: BLE001
-            logger.warning("自选实时拉取失败: %s", e)
-            return
 
-        if not resp:
-            logger.warning("自选实时行情数据为空")
-            return
+        records: list[dict] = []
+        if include_us and stock_symbols:
+            from app.tickflow.client import get_paid_realtime_client
 
-        records = []
-        for q in resp:
-            ext = q.get("ext") or {}
-            last_price = q.get("last_price")
-            prev_close = q.get("prev_close")
-            change_amount = ext.get("change_amount")
-            change_pct = ext.get("change_pct")
-            if change_amount is None and last_price is not None and prev_close is not None:
-                change_amount = float(last_price) - float(prev_close)
-            if change_pct is None and change_amount is not None and prev_close not in (None, 0):
-                change_pct = float(change_amount) / float(prev_close) * 100
-            records.append({
-                "symbol": q.get("symbol"),
-                "name": q.get("name") or ext.get("name"),
-                "last_price": last_price,
-                "prev_close": prev_close,
-                "open": q.get("open"),
-                "high": q.get("high"),
-                "low": q.get("low"),
-                "volume": q.get("volume"),
-                "amount": q.get("amount"),
-                "change_pct": change_pct,
-                "change_amount": change_amount,
-                "amplitude": ext.get("amplitude"),
-                "turnover_rate": ext.get("turnover_rate"),
-                "timestamp": q.get("timestamp"),
-                "session": q.get("session"),
-            })
+            tf = get_paid_realtime_client()
+            if tf is None:
+                logger.warning("自选实时拉取跳过:未配置付费服务器 API Key")
+            else:
+                try:
+                    resp = tf.quotes.get(symbols=stock_symbols) or []
+                    records = [self._parse_quote_record(q) for q in resp]
+                except Exception as e:
+                    logger.warning("自选实时拉取失败: %s", e)
+
+        crypto_records: list[dict] = []
+        if include_crypto and crypto_symbols:
+            crypto_records = self._fetch_crypto_records(set(crypto_symbols))
+
+        if not records and not crypto_records:
+            logger.debug("自选实时行情数据为空")
+            return
 
         fetch_ms = (time.perf_counter() - t0) * 1000
         fetched_at = time.time() * 1000
@@ -539,21 +537,31 @@ class QuoteService:
             self._fetch_time = now_ts
             self._fetch_ms = fetch_ms
             self._fetched_at = fetched_at
-            self._symbol_count = len(records)
+            self._symbol_count = len(records) + len(crypto_records)
             self._index_symbol_count = 0
             self._etf_symbol_count = 0
             self._index_quotes_cache = None
 
-        logger.info("自选实时刷新: %d 只股票, 耗时 %.0fms", len(records), fetch_ms)
+        logger.info("自选实时刷新: %d 只美股 + %d 个加密, 耗时 %.0fms",
+                    len(records), len(crypto_records), fetch_ms)
 
-        daily_df = self._build_daily(records)
+        daily_df = self._build_daily(records, markets.us_trading_date())
         quote_extra = self._build_quote_extra(records)
         if not daily_df.is_empty() and self._repo:
             try:
                 self._repo.merge_live_daily_asset("stock", daily_df)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning("自选实时日K写盘失败: %s", e)
             self._flush_live_enriched(daily_df, quote_extra, asset_type="stock", merge=True)
+
+        crypto_daily_df = self._build_daily(crypto_records, markets.crypto_trading_date())
+        crypto_extra = self._build_quote_extra(crypto_records)
+        if not crypto_daily_df.is_empty() and self._repo:
+            try:
+                self._repo.merge_live_daily_asset("stock", crypto_daily_df)
+            except Exception as e:
+                logger.warning("加密自选日K写盘失败: %s", e)
+            self._flush_live_enriched(crypto_daily_df, crypto_extra, asset_type="crypto", merge=True)
 
         self._update_event.set()
         self._evaluate_monitors(daily_df, quote_extra)
@@ -563,8 +571,117 @@ class QuoteService:
     # ================================================================
 
     @staticmethod
-    def _build_daily(records: list[dict]) -> pl.DataFrame:
-        """将 API records 转为日K格式 DataFrame (只有 OHLCV, 写 kline_daily 用)。"""
+    def _parse_quote_record(q: dict) -> dict:
+        """把 TickFlow quote 响应解析为统一 record dict(change_pct 为百分数)。"""
+        ext = q.get("ext") or {}
+        last_price = q.get("last_price")
+        prev_close = q.get("prev_close")
+        change_amount = ext.get("change_amount")
+        change_pct = ext.get("change_pct")
+        if change_amount is None and last_price is not None and prev_close is not None:
+            change_amount = float(last_price) - float(prev_close)
+        if change_pct is None and change_amount is not None and prev_close not in (None, 0):
+            change_pct = float(change_amount) / float(prev_close) * 100
+        return {
+            "symbol": q.get("symbol"),
+            "name": q.get("name") or ext.get("name"),
+            "last_price": last_price,
+            "prev_close": prev_close,
+            "open": q.get("open"),
+            "high": q.get("high"),
+            "low": q.get("low"),
+            "volume": q.get("volume"),
+            "amount": q.get("amount"),
+            "change_pct": change_pct,
+            "change_amount": change_amount,
+            "amplitude": ext.get("amplitude"),
+            "turnover_rate": ext.get("turnover_rate"),
+            "timestamp": q.get("timestamp"),
+            "session": q.get("session"),
+        }
+
+    def _known_crypto_symbols(self) -> set[str]:
+        """instruments 里已知的加密 symbol 集合(未同步时兜底核心加密对)。"""
+        out: set[str] = set()
+        try:
+            inst = self._repo.get_instruments() if self._repo else pl.DataFrame()
+            if not inst.is_empty() and "symbol" in inst.columns:
+                if "type" in inst.columns:
+                    out = set(
+                        inst.filter(pl.col("type") == "crypto")["symbol"].cast(pl.Utf8).to_list()
+                    )
+                else:
+                    out = {s for s in inst["symbol"].cast(pl.Utf8).to_list() if markets.is_crypto(s)}
+        except Exception as e:
+            logger.debug("加密 symbol 集合加载失败: %s", e)
+        if not out:
+            out = set(markets.CORE_CRYPTO_SYMBOLS)
+        return out
+
+    @staticmethod
+    def _fetch_crypto_records(allowed: set[str]) -> list[dict]:
+        """Binance 全市场 24h ticker → 统一 record dict(仅保留 allowed 里的 symbol)。"""
+        if not allowed:
+            return []
+        from app.data_providers import binance_provider
+
+        try:
+            tickers = binance_provider.fetch_crypto_ticker24()
+        except Exception as e:
+            logger.warning("加密实时行情拉取失败: %s", e)
+            return []
+
+        records: list[dict] = []
+        for t in tickers:
+            sym = t.get("symbol")
+            if sym not in allowed:
+                continue
+            prev_close = t.get("prev_close")
+            high, low = t.get("high"), t.get("low")
+            amplitude = None
+            if prev_close and high is not None and low is not None and prev_close > 0:
+                amplitude = (float(high) - float(low)) / float(prev_close) * 100
+            records.append({
+                "symbol": sym,
+                "name": None,
+                "last_price": t.get("last_price"),
+                "prev_close": prev_close,
+                "open": t.get("open"),
+                "high": high,
+                "low": low,
+                "volume": t.get("volume"),
+                "amount": t.get("amount"),
+                "change_pct": t.get("change_pct"),        # Binance 已是百分数
+                "change_amount": t.get("change_amount"),
+                "amplitude": amplitude,
+                "turnover_rate": None,                    # 加密无流通股本概念
+                "timestamp": None,
+                "session": None,
+            })
+        return records
+
+    @staticmethod
+    def _crypto_as_index_records(crypto_records: list[dict], index_symbols: set[str]) -> list[dict]:
+        """把加密基准记录转成指数缓存输入(百分数→小数, _build_index_quotes 会统一 x100)。"""
+        out: list[dict] = []
+        for r in crypto_records:
+            sym = r.get("symbol")
+            if sym not in index_symbols:
+                continue
+            row = dict(r)
+            row["name"] = markets.CORE_INDEX_NAMES.get(sym, sym)
+            for col in ("change_pct", "amplitude"):
+                if row.get(col) is not None:
+                    row[col] = float(row[col]) / 100
+            out.append(row)
+        return out
+
+    @staticmethod
+    def _build_daily(records: list[dict], trade_date: date) -> pl.DataFrame:
+        """将 API records 转为日K格式 DataFrame (只有 OHLCV, 写 kline_daily 用)。
+
+        trade_date: 该批记录归属的交易日(美股=美东日期, 加密=UTC 日期)。
+        """
         if not records:
             return pl.DataFrame()
         df = pl.DataFrame(records)
@@ -584,7 +701,7 @@ class QuoteService:
         if not select_exprs:
             return pl.DataFrame()
         result = df.select(select_exprs).with_columns(
-            pl.lit(date.today()).cast(pl.Date).alias("date"),
+            pl.lit(trade_date).cast(pl.Date).alias("date"),
         )
         # 修复: API 在非交易时段可能返回 open/high/low=0 或 null,
         # 导致蜡烛从 0 开始。用 close 填充这些异常值。
@@ -603,6 +720,12 @@ class QuoteService:
         """构建 API 直接提供的补充字段 (不写 daily, 只传给 enriched 计算)。
 
         包含: prev_close, change_pct, change_amount, amplitude, turnover_rate。
+
+        口径归一: records 里的 change_pct/amplitude 是百分数(美股来自
+        _parse_quote_record 的 *100, 加密来自 Binance priceChangePercent),
+        但 enriched 契约(compute_enriched 与批量管道)是小数(如 0.052)。
+        这里在喂给 compute_enriched_today 前 /100 归一为小数, 避免放大 100 倍。
+        (SSE 指数缓存走独立的 _crypto_as_index_records/_build_index_quotes 路径, 不受影响。)
         """
         if not records:
             return pl.DataFrame()
@@ -613,15 +736,20 @@ class QuoteService:
         ] if c in df.columns]
         if not keep or "symbol" not in keep:
             return pl.DataFrame()
-        return df.select(keep)
+        df = df.select(keep)
+        # 百分数 → 小数, 与 enriched 存储契约对齐
+        for col in ("change_pct", "amplitude"):
+            if col in df.columns:
+                df = df.with_columns((pl.col(col).cast(pl.Float64) / 100).alias(col))
+        return df
 
     @staticmethod
     def _build_index_quotes(records: list[dict]) -> pl.DataFrame:
-        """构建指数实时行情缓存，不落股票 parquet。
+        """构建指数实时行情缓存,不落股票 parquet。
 
         注意: API 返回的 change_pct/amplitude 是小数 (0.0366 = 3.66%),
         统一转成百分比输出, 与 _fallback_index_quotes_from_daily 口径一致
-        (前端指数侧不×100, 直接 toFixed(2)% 展示)。
+        (前端指数侧不x100, 直接 toFixed(2)% 展示)。
         """
         if not records:
             return pl.DataFrame()
@@ -641,13 +769,10 @@ class QuoteService:
             df = df.with_columns(pl.col("last_price").alias("close"))
         return df
 
-    @staticmethod
-    def _is_trading_hours() -> bool:
-        now = datetime.now()
-        t = now.time()
-        morning = dt_time(9, 15) <= t <= dt_time(11, 35)
-        afternoon = dt_time(12, 55) <= t <= dt_time(15, 5)
-        return now.weekday() < 5 and (morning or afternoon)
+    @classmethod
+    def _is_trading_hours(cls) -> bool:
+        """任一市场是否可轮询: 美股常规时段, 或加密实时开启(7x24)。"""
+        return markets.is_us_trading_hours() or cls._crypto_realtime_enabled()
 
     @staticmethod
     def _save_enabled(enabled: bool) -> None:
@@ -662,7 +787,7 @@ class QuoteService:
         """行情更新后评估统一监控规则引擎,并刷新策略结果缓存。"""
         try:
             # 获取 enriched 数据 (刚算好的)
-            enriched_today, enriched_date = self.get_enriched_today()
+            enriched_today, _enriched_date = self.get_enriched_today()
             if enriched_today.is_empty():
                 return
 
@@ -683,7 +808,7 @@ class QuoteService:
                                 for row in inst_df.select(["symbol", "name"]).iter_rows(named=True)
                                 if row.get("name")
                             })
-                    except Exception as e:  # noqa: BLE001
+                    except Exception as e:
                         logger.debug("name_map 构建失败 (不影响监控): %s", e)
                     rule_events = engine.evaluate(enriched_today)
                     if rule_events:
@@ -693,7 +818,7 @@ class QuoteService:
                             alert_store.append_many(
                                 self._app_state.repo.store.data_dir, rule_events,
                             )
-                        except Exception as e:  # noqa: BLE001
+                        except Exception as e:
                             logger.warning("告警落盘失败: %s", e)
                         # 转为 SSE 推送格式 (兼容旧 alert schema)
                         for ev in rule_events:
@@ -737,7 +862,7 @@ class QuoteService:
             if rule_events:
                 self._maybe_send_webhook(rule_events, engine)
 
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("监控评估失败: %s", e)
 
     def _maybe_send_webhook(self, rule_events: list[dict], engine) -> None:
@@ -752,8 +877,7 @@ class QuoteService:
         以便反查引擎规则判断是否启用推送。
         """
         try:
-            from app.services import preferences
-            from app.services import webhook_adapter
+            from app.services import preferences, webhook_adapter
 
             url = preferences.get_feishu_webhook_url()
             if not url:
@@ -782,7 +906,7 @@ class QuoteService:
                     pushed += 1
             if pushed:
                 logger.info("飞书 Webhook 推送: %d 条", pushed)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug("Webhook 推送异常 (不影响告警主流程): %s", e)
 
     def _maybe_send_system_notifications(self, all_alerts: list[dict]) -> None:
@@ -794,8 +918,7 @@ class QuoteService:
         - 批量策略事件 (symbol="") 聚合为一条通知, 避免刷屏
         """
         try:
-            from app.services import preferences
-            from app.services import notify_adapter
+            from app.services import notify_adapter, preferences
 
             if not preferences.get_system_notify_enabled():
                 return
@@ -813,14 +936,11 @@ class QuoteService:
                 message = ev.get("message") or ""
 
                 # 正文: 优先用现成 message, 拼上 symbol/name 让用户一眼定位
-                if symbol:
-                    body = f"{symbol} {name} {message}".strip()
-                else:
-                    body = message or name
+                body = f"{symbol} {name} {message}".strip() if symbol else (message or name)
 
                 title = f"TickFlow · {source_label}"
                 notify_adapter.notify(title, body)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug("系统通知发送异常 (不影响告警主流程): %s", e)
 
     @staticmethod
@@ -839,16 +959,13 @@ class QuoteService:
                      不写 daily, 直接传给 compute_enriched_today 避免重复计算。
         """
         try:
-            today = date.today()
+            # 目标交易日取自 daily_df 本身(美股=美东日期, 加密=UTC 日期)
+            today = daily_df["date"][0] if "date" in daily_df.columns else date.today()
             t0 = time.perf_counter()
 
             # ---- 尝试增量路径 ----
             live_agg = self._repo.get_live_agg() if asset_type == "stock" else pl.DataFrame()
-            prev_enriched, prev_date = (
-                self._repo.get_enriched_latest()
-                if asset_type == "stock"
-                else self._repo.get_enriched_latest_asset(asset_type)
-            )
+            prev_enriched, prev_date = self._repo.get_enriched_latest_asset(asset_type)
 
             use_incremental = (
                 asset_type == "stock"
@@ -877,6 +994,7 @@ class QuoteService:
             # ---- 全量回退路径 ----
             if not use_incremental:
                 from datetime import timedelta
+
                 from app.indicators.pipeline import compute_enriched
 
                 logger.info("enriched 全量计算 (live_agg=%s, 上次日期=%s)",
@@ -886,12 +1004,13 @@ class QuoteService:
                 table = "kline_etf_daily" if asset_type == "etf" else "kline_daily"
                 daily_glob = str(self._repo.store.data_dir / table / "**" / "*.parquet")
                 ohlcv_cols = ["symbol", "date", "open", "high", "low", "close", "volume", "amount"]
-                hist_df = (
-                    pl.scan_parquet(daily_glob)
-                    .filter(pl.col("date") >= cutoff)
-                    .sort(["symbol", "date"])
-                    .collect()
-                )
+                scan = pl.scan_parquet(daily_glob).filter(pl.col("date") >= cutoff)
+                # 加密与美股共用 kline_daily, 全量回退时按本批 symbol 过滤,
+                # 避免美股行混入加密 enriched(反之美股走增量, 不入此路径)。
+                if asset_type == "crypto" and "symbol" in daily_df.columns:
+                    crypto_syms = daily_df["symbol"].cast(pl.Utf8).to_list()
+                    scan = scan.filter(pl.col("symbol").is_in(crypto_syms))
+                hist_df = scan.sort(["symbol", "date"]).collect()
                 if hist_df.is_empty():
                     return
 
@@ -905,10 +1024,9 @@ class QuoteService:
                 factor_path = self._repo.store.data_dir / factor_dir / "all.parquet"
                 factors = pl.DataFrame()
                 if factor_path.exists():
-                    try:
+                    import contextlib
+                    with contextlib.suppress(Exception):
                         factors = pl.read_parquet(factor_path)
-                    except Exception:
-                        pass
                 instruments = self._repo.get_instruments() if asset_type == "stock" else None
 
                 enriched_full = compute_enriched(full_df, factors=factors, instruments=instruments)
@@ -927,5 +1045,5 @@ class QuoteService:
             mode_label = "增量" if use_incremental else "全量"
             logger.info("enriched %s: %d 只, %s, 耗时 %.0fms",
                         mode_label, len(enriched_today), today, elapsed * 1000)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("enriched 计算失败: %s", e)

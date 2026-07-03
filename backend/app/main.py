@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
-from app.api import analysis, auth as auth_api, backtest, data, ext_data, financials, indices, intraday, kline, market_recap, monitor_rules, alerts, overview, pipeline, rps, screener, settings as settings_api, signals, stock_analysis, strategy, watchlist
+from app.api import analysis, auth as auth_api, backtest, data, ext_data, financials, indices, intraday, kline, market_recap, monitor_rules, alerts, overview, pipeline, screener, settings as settings_api, signals, stock_analysis, strategy, watchlist
 from app.api.routes import router as core_router
 from app.config import settings
 from app.jobs import daily_pipeline
@@ -69,42 +69,20 @@ async def lifespan(app: FastAPI):
     app.state.strategy_monitor = strategy_monitor
     qs.set_app_state(app.state)
 
-    # 五档盘口 sealed 服务(真假涨停/跌停, 独立旁路线)
-    from app.services.depth_service import DepthService
-    depth_service = DepthService()
-    depth_service.set_repo(repo)
-    depth_service.set_app_state(app.state)
-    app.state.depth_service = depth_service
-
     # 启动调度器(若 enriched 数据为空,首次启动可手动 POST /api/pipeline/run)
     try:
-        daily_pipeline.set_app_state(app.state)  # 供 depth_finalize job 访问 depth_service
+        daily_pipeline.set_app_state(app.state)  # 供 scheduled job 访问 quote_service 等单例
         scheduler = daily_pipeline.start_scheduler(repo, capset)
         app.state.scheduler = scheduler
     except Exception as e:  # noqa: BLE001
         logger.warning("scheduler not started: %s", e)
         app.state.scheduler = None
 
-    # depth sealed: 启动补跑(当天文件不存在) + 盘中轮询(有能力时)
-    try:
-        depth_service.boot_check()
-        depth_service.start_polling()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("depth_service init failed: %s", e)
-
     # 扩展数据定时拉取
     from app.services.ext_pull import pull_scheduler
     pull_scheduler.start(store.data_dir)
     pull_scheduler.refresh(store.data_dir)
     app.state.pull_scheduler = pull_scheduler
-
-    # 内置扩展表 (概念/行业): 只创建 config (含拉取配置), 不自动拉数据
-    # 数据获取由用户在概念/行业页点「获取数据」手动触发 (POST /api/ext-data/presets/{id}/fetch)
-    try:
-        from app.services.ext_presets import ensure_builtin_presets
-        await ensure_builtin_presets(store.data_dir)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("内置扩展表初始化失败 (不影响启动): %s", e)
 
     # 财务数据 (需 Expert 套餐): 仅初始化调度器供 /api/financials/sync/* 手动同步,
     # 不启动自动调度——用户在「财务分析」页点「同步」手动拉取。
@@ -174,16 +152,13 @@ async def lifespan(app: FastAPI):
     qs = getattr(app.state, "quote_service", None)
     if qs:
         qs.stop()
-    dsvc = getattr(app.state, "depth_service", None)
-    if dsvc:
-        dsvc.stop_polling()
     logger.info("shutdown")
 
 
 app = FastAPI(
     title="TickFlow Stock Panel",
     version=__version__,
-    description="A 股选股 + 回测面板 — TickFlow 适配",
+    description="美股&加密选股 + 回测面板 — TickFlow + Binance 适配",
     lifespan=lifespan,
 )
 
@@ -266,14 +241,11 @@ app.include_router(strategy.router)
 app.include_router(signals.router)
 app.include_router(monitor_rules.router)
 app.include_router(alerts.router)
-app.include_router(rps.router)
 
 
 # 能力门控异常 → 403(而非默认 500)
 # 业务代码用 capset.require(Cap.X) 断言能力,缺失时抛 CapabilityDenied;
 # 若不注册 handler 会冒泡成 500 Internal Server Error,对前端不友好且语义错误。
-from fastapi import Request
-from fastapi.responses import JSONResponse
 from app.tickflow.capabilities import CapabilityDenied
 
 

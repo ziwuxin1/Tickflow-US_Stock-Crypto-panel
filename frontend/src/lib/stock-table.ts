@@ -17,8 +17,6 @@ export interface Signal {
 
 /** 信号字段定义：[行字段名, 展示标签, 信号类型] */
 export const SIGNAL_FIELDS: [string, string, SignalType][] = [
-  ['signal_limit_up', '涨停', 'bull'],
-  ['signal_broken_board_recovery', '反包', 'bull'],
   ['signal_volume_surge', '放量', 'neutral'],
   ['signal_ma_golden_5_20', 'MA金叉', 'bull'],
   ['signal_ma_dead_5_20', 'MA死叉', 'bear'],
@@ -95,8 +93,7 @@ export function getSortValue(r: any, col: ColumnConfig): any {
     case 'momentum_20d':  return r.momentum_20d
     case 'momentum_30d':  return r.momentum_30d
     case 'momentum_60d':  return r.momentum_60d
-    case 'limit_ups':     return r.consecutive_limit_ups ?? 0
-    case 'limit_downs':   return r.consecutive_limit_downs ?? 0
+    case 'consecutive_up_days': return r.consecutive_up_days ?? 0
     case 'score':         return r.score
     default: return null
   }

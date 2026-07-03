@@ -2,12 +2,13 @@ import { useEffect, useRef, useMemo, useState } from 'react'
 import * as echarts from 'echarts'
 import type { ECharts, EChartsOption } from 'echarts'
 import type { KlineRow, LevelSeries } from '@/lib/api'
+import { BULL_SOFT, BEAR_SOFT } from '@/lib/palette'
 
 /**
  * 个股分析专用日 K 图表。
  *
  * 与 StockDailyKChart/EChartsCandlestick 刻意不复用:
- *   - 那套图表面向「行情浏览」,强调全套指标副图(MA/MACD/KDJ/BOLL)、涨停标记等;
+ *   - 那套图表面向「行情浏览」,强调全套指标副图(MA/MACD/KDJ/BOLL)、事件标记等;
  *   - 本图表面向「分析决策」,核心是【关键价位】(压力/支撑/密集区/枢轴/前高前低),
  *     通过开关按钮控制各价位组的显隐,布局更简洁(主图 + 成交量即可)。
  *
@@ -18,14 +19,14 @@ import type { KlineRow, LevelSeries } from '@/lib/api'
  *   - 指标副图: 后续如需 MACD/KDJ,按 SUB_CHARTS 模式扩展
  */
 
-// ===== 配色(与主图一致的红涨绿跌,深色背景) =====
+// ===== 配色(与主图一致的绿涨红跌,深色背景) — 色值取自 lib/palette =====
 const THEME = {
-  bull: '#C74040',
-  bear: '#2D9B65',
+  bull: BULL_SOFT,
+  bear: BEAR_SOFT,
   text: '#A1A1AA',
   grid: 'rgba(255,255,255,0.04)',
-  volUp: 'rgba(240,68,56,0.5)',
-  volDown: 'rgba(18,183,106,0.5)',
+  volUp: 'rgba(18,183,106,0.5)',
+  volDown: 'rgba(240,68,56,0.5)',
 }
 
 // ===== 价位类型(与后端 levels.py 的 LEVEL_TYPES 对齐) =====
@@ -541,7 +542,8 @@ function strengthColor(strength: string | undefined, base: string): string {
 
 function fmtVol(v: number): string {
   if (!v) return '0'
-  if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿'
-  if (v >= 1e4) return (v / 1e4).toFixed(0) + '万'
+  if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B'
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M'
+  if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K'
   return v.toFixed(0)
 }

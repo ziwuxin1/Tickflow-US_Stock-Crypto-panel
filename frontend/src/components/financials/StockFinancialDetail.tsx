@@ -8,6 +8,7 @@ import {
   useFinancialCashFlow,
 } from '@/lib/useFinancials'
 import { fmtPrice, fmtBigNum, fmtDate } from '@/lib/format'
+import { isCrypto } from '@/lib/markets'
 import { Skeleton } from '@/components/data/Skeleton'
 import { startAnalysis, findLatestHistoryReport, openHistoryReport } from '@/lib/aiReportStore'
 import { toast } from '@/components/Toast'
@@ -27,8 +28,9 @@ const TABS: { key: TabKey; label: string; icon: typeof TrendingUp }[] = [
 ]
 
 // 字段定义:键 → (中文名, 格式化类型)
-// pct=百分点(存的是 12.3 表示 12.3%); amount=金额(元,转亿/万亿); perShare=每股; num=普通数值(保留2位)
-type FmtType = 'pct' | 'amount' | 'perShare' | 'num'
+// pct=百分点(存的是 12.3 表示 12.3%); ratio=小数比率(存 0.123 表示 12.3%,yfinance 口径);
+// amount=金额($,转 K/M/B/T); perShare=每股; multiple=倍数(PE/PB); num=普通数值(保留2位)
+type FmtType = 'pct' | 'ratio' | 'amount' | 'perShare' | 'multiple' | 'num'
 type FieldDef = { label: string; fmt: FmtType; group?: string }
 
 const FIELD_DEFS: Record<TabKey, FieldDef[]> = {
@@ -96,17 +98,56 @@ const FIELD_DEFS: Record<TabKey, FieldDef[]> = {
   ],
 }
 
+// 美股(yfinance 免费源)字段定义 —— 键与 backend/yfinance_provider.fetch_us_financials 对齐。
+// 科目较 A 股精简;比率字段为小数(0.269 = 26.9%),用 ratio 格式化;PE/PB 为倍数。
+const US_FIELD_DEFS: Record<TabKey, FieldDef[]> = {
+  metrics: [
+    { label: '市盈率 PE', fmt: 'multiple', key: 'pe' } as any,
+    { label: '市净率 PB', fmt: 'multiple', key: 'pb' } as any,
+    { label: '总市值', fmt: 'amount', key: 'market_cap' } as any,
+    { label: '净资产收益率 ROE', fmt: 'ratio', key: 'roe' } as any,
+    { label: '销售毛利率', fmt: 'ratio', key: 'gross_margin' } as any,
+    { label: '销售净利率', fmt: 'ratio', key: 'net_margin' } as any,
+    { label: '资产负债率', fmt: 'ratio', key: 'debt_to_asset' } as any,
+  ],
+  income: [
+    { label: '营业收入', fmt: 'amount', key: 'total_revenue' } as any,
+    { label: '毛利润', fmt: 'amount', key: 'gross_profit' } as any,
+    { label: '营业利润', fmt: 'amount', key: 'operating_income' } as any,
+    { label: '净利润', fmt: 'amount', key: 'net_income' } as any,
+    { label: '每股收益 EPS', fmt: 'perShare', key: 'eps' } as any,
+  ],
+  balance_sheet: [
+    { label: '资产总计', fmt: 'amount', key: 'total_assets' } as any,
+    { label: '负债合计', fmt: 'amount', key: 'total_liabilities' } as any,
+    { label: '股东权益', fmt: 'amount', key: 'stockholders_equity' } as any,
+    { label: '总债务', fmt: 'amount', key: 'total_debt' } as any,
+  ],
+  cash_flow: [
+    { label: '经营活动现金流', fmt: 'amount', key: 'operating_cash_flow' } as any,
+    { label: '投资活动现金流', fmt: 'amount', key: 'investing_cash_flow' } as any,
+    { label: '筹资活动现金流', fmt: 'amount', key: 'financing_cash_flow' } as any,
+    { label: '自由现金流', fmt: 'amount', key: 'free_cash_flow' } as any,
+  ],
+}
+
 function formatValue(v: number | null | undefined, fmt: FmtType): string {
   if (v == null || Number.isNaN(v)) return '—'
   switch (fmt) {
     case 'pct':
       // 存储的是百分点(12.3 表示 12.3%),直接保留2位 + %
       return `${v.toFixed(2)}%`
+    case 'ratio':
+      // 小数比率(0.123 表示 12.3%,yfinance 口径)→ 转百分数
+      return `${(v * 100).toFixed(2)}%`
     case 'amount':
-      // 金额(元)→ 亿/万亿;保留负号
+      // 金额($)→ K/M/B/T;保留负号
       return fmtBigNum(v)
     case 'perShare':
       return fmtPrice(v, 2)
+    case 'multiple':
+      // 倍数(PE/PB)→ 保留2位 + x
+      return `${v.toFixed(2)}x`
     case 'num':
     default:
       return v.toFixed(2)
@@ -161,7 +202,10 @@ export function StockFinancialDetail({ symbol, name }: Props) {
   const rows = (current.data?.data ?? []).slice().sort((a, b) =>
     (b.period_end ?? '').localeCompare(a.period_end ?? '')
   )
-  const fieldDefs = FIELD_DEFS[tab]
+  // 美股(免 key 走 yfinance 免费源)与 A 股财务 schema 字段名不同,按 symbol 选择字段集:
+  // 美股 symbol 带交易所后缀(AAPL.US),加密无后缀且无财务(此面板不会展示加密)。
+  const isUsStock = !isCrypto(symbol)
+  const fieldDefs = (isUsStock ? US_FIELD_DEFS : FIELD_DEFS)[tab]
 
   // 头部报告期信息取最新一期(优先用当前 tab,兜底用 metrics)
   const latestPeriod = rows[0]?.period_end ?? metrics.data?.data?.[0]?.period_end ?? null

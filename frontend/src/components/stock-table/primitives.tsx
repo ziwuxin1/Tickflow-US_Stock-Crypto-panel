@@ -1,7 +1,7 @@
 /**
  * 股票列表单元格渲染原语（共享）。
  *
- * 只负责「无业务上下文」的纯数据列：价格/成交/均线/区间/技术指标/动量/连板/财务等。
+ * 只负责「无业务上下文」的纯数据列：价格/成交/均线/区间/技术指标/动量/连涨/财务等。
  * symbol、strategies、score、signals、candle 等需要页面上下文（加自选按钮、失效行、
  * kline 数据、信号提取）的列由各页面的 renderCell 自行处理。
  *
@@ -13,24 +13,16 @@ import { fmtPrice, fmtPct, fmtBigNum, priceColorClass } from '@/lib/format'
 import type { ColumnConfig } from '@/lib/list-columns'
 import { NUM_CELL_CLASS } from '@/lib/stock-table'
 
-// ===== 板块标识（自选/策略页统一口径） =====
-
-export function boardTag(symbol: string): { label: string; color: string } | null {
-  if (/^(300|301)/.test(symbol)) return { label: '创', color: 'text-[#f97316] bg-[#f97316]/12 border-[#f97316]/25' }
-  if (/^688/.test(symbol))       return { label: '科', color: 'text-cyan-400 bg-cyan-400/12 border-cyan-400/25' }
-  if (/\.BJ$/.test(symbol))      return { label: '北', color: 'text-purple-400 bg-purple-400/12 border-purple-400/25' }
-  return null
-}
-
 // ===== RSI 指标带颜色 =====
+// 超买(≥70)=风险=红(bear), 超卖(≤30)=机会=绿(bull) — 国际惯例配色
 
 export function RSIBadge({ value }: { value: number | null | undefined }) {
   if (value == null || Number.isNaN(value)) return <span className="text-muted">—</span>
   let color = 'text-secondary'
   if (value >= 80) color = 'text-danger font-medium'
-  else if (value >= 70) color = 'text-bull'
-  else if (value <= 20) color = 'text-bear font-medium'
-  else if (value <= 30) color = 'text-bear'
+  else if (value >= 70) color = 'text-bear'
+  else if (value <= 20) color = 'text-bull font-medium'
+  else if (value <= 30) color = 'text-bull'
   return <span className={`tabular-nums ${color}`}>{value.toFixed(1)}</span>
 }
 
@@ -114,25 +106,13 @@ export function renderBuiltinDataCell(r: any, col: ColumnConfig): ReactNode | nu
     case 'momentum_20d': return <td key={col.id} className={`${numCls} ${priceColorClass(r.momentum_20d)}`}>{fmtPct(r.momentum_20d)}</td>
     case 'momentum_30d': return <td key={col.id} className={`${numCls} ${priceColorClass(r.momentum_30d)}`}>{fmtPct(r.momentum_30d)}</td>
     case 'momentum_60d': return <td key={col.id} className={`${numCls} ${priceColorClass(r.momentum_60d)}`}>{fmtPct(r.momentum_60d)}</td>
-    // 连板
-    case 'limit_ups':
+    // 连涨天数
+    case 'consecutive_up_days':
       return (
         <td key={col.id} className="px-3 py-2 text-center">
-          {r.consecutive_limit_ups > 0 ? (
-            <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1 rounded bg-danger/15 text-danger text-xs font-bold tabular-nums">
-              {r.consecutive_limit_ups}
-            </span>
-          ) : (
-            <span className="text-muted">—</span>
-          )}
-        </td>
-      )
-    case 'limit_downs':
-      return (
-        <td key={col.id} className="px-3 py-2 text-center">
-          {r.consecutive_limit_downs > 0 ? (
-            <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1 rounded bg-bear/15 text-bear text-xs font-bold tabular-nums">
-              {r.consecutive_limit_downs}
+          {r.consecutive_up_days > 0 ? (
+            <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1 rounded bg-bull/15 text-bull text-xs font-bold tabular-nums">
+              {r.consecutive_up_days}
             </span>
           ) : (
             <span className="text-muted">—</span>

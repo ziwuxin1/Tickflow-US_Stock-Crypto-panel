@@ -6,7 +6,7 @@
 每条报告结构:
 {
   "id": "rpt_xxx",           # 唯一 id
-  "symbol": "600519.SH",
+  "symbol": "AAPL.US",
   "name": "贵州茅台",
   "focus": "",               # 用户追加的关心点(可为空)
   "content": "# ...markdown", # 报告正文

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Bell, TrendingUp, TrendingDown, X } from 'lucide-react'
 import type { AlertEvent } from '@/lib/api'
-import { fmtPct, fmtPrice } from '@/lib/format'
+import { fmtPct, fmtPrice, priceColorClass } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { playNotificationSound } from '@/lib/notificationSound'
 
@@ -138,7 +138,7 @@ export function AlertToastContainer() {
                 {ev.symbol && <span className="font-mono text-xs font-medium text-foreground shrink-0">{ev.symbol}</span>}
                 {ev.name && <span className="text-xs text-secondary truncate flex-1">{ev.name}</span>}
                 {ev.change_pct != null && (
-                  <span className={cn('inline-flex items-center gap-0.5 text-[10px] font-mono font-medium shrink-0', pct >= 0 ? 'text-danger' : 'text-bear')}>
+                  <span className={cn('inline-flex items-center gap-0.5 text-[10px] font-mono font-medium shrink-0', priceColorClass(pct))}>
                     {pct >= 0 ? <TrendingUp className="h-2.5 w-2.5" /> : <TrendingDown className="h-2.5 w-2.5" />}
                     {fmtPct(pct)}
                   </span>
@@ -152,7 +152,7 @@ export function AlertToastContainer() {
               {isStrategy ? (
                 <div className="mt-1 flex items-center gap-1.5 pl-0.5">
                   <Bell className={cn('h-3 w-3 shrink-0', sev.replace('bg-', 'text-'))} />
-                  <span className={cn('text-[11px] font-medium', isNew ? 'text-danger' : 'text-emerald-400')}>
+                  <span className={cn('text-[11px] font-medium', isNew ? 'text-bull' : 'text-muted')}>
                     {isNew ? '进入' : '移出'}
                   </span>
                   <span className="text-[11px] text-foreground/70">策略</span>

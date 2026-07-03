@@ -27,11 +27,11 @@ def to_polars(data) -> pl.DataFrame:
         return pl.from_pandas(data.reset_index())
     try:
         return pl.DataFrame(data)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return pl.DataFrame()
 
 
-def normalize_daily(data, default_symbol: str | None = None, source: str = "tickflow") -> pl.DataFrame:  # noqa: ARG001
+def normalize_daily(data, default_symbol: str | None = None, source: str = "tickflow") -> pl.DataFrame:
     df = to_polars(data)
     if df.is_empty():
         return df
@@ -50,12 +50,23 @@ def normalize_daily(data, default_symbol: str | None = None, source: str = "tick
     for col in ("open", "high", "low", "close", "volume", "amount"):
         if col in df.columns:
             df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
+    # amount 兜底: 美股日K amount 恒为 0 → 用 close*volume 估算
+    if {"close", "volume"}.issubset(df.columns):
+        if "amount" in df.columns:
+            df = df.with_columns(
+                pl.when(pl.col("amount").is_null() | (pl.col("amount") <= 0))
+                .then(pl.col("close") * pl.col("volume"))
+                .otherwise(pl.col("amount"))
+                .alias("amount")
+            )
+        else:
+            df = df.with_columns((pl.col("close") * pl.col("volume")).alias("amount"))
     df = filter_halt_days(df)
     keep = [c for c in DAILY_COLS if c in df.columns]
     return df.select(keep) if keep else pl.DataFrame()
 
 
-def normalize_adj_factors(data, source: str = "tickflow") -> pl.DataFrame:  # noqa: ARG001
+def normalize_adj_factors(data, source: str = "tickflow") -> pl.DataFrame:
     df = to_polars(data)
     if df.is_empty():
         return df

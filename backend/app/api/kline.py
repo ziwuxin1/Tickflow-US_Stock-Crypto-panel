@@ -7,7 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from app.indicators.pipeline import compute_enriched, compute_enriched_single
+from app.indicators.pipeline import compute_enriched
 from app.services import kline_sync
 
 logger = logging.getLogger(__name__)
@@ -91,7 +91,7 @@ def _get_stock_info(repo, symbol: str) -> dict:
 @router.get("/daily")
 def get_daily(
     request: Request,
-    symbol: str = Query(..., description="标的代码,如 000001.SZ"),
+    symbol: str = Query(..., description="标的代码,如 AAPL.US / BTCUSDT"),
     days: int = Query(120, ge=10, le=2000),
     start_date: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD, 优先于 days"),
     end_date: Optional[str] = Query(None, description="截止日期 YYYY-MM-DD, 默认今天"),
@@ -120,18 +120,28 @@ def get_daily(
     df = repo.get_daily(symbol, start, end)
 
     if df.is_empty():
+        from app import markets
+        is_crypto = markets.is_crypto(symbol)
         try:
-            raw = kline_sync.sync_daily_batch([symbol], count=days + 30)
+            if is_crypto:
+                # 加密标的走 Binance 公共行情按需拉取 (无 key), 与美股即时出图行为一致
+                from app.data_providers import binance_provider
+                raw = binance_provider.fetch_crypto_daily(
+                    [symbol], start - timedelta(days=30), end
+                )
+            else:
+                raw = kline_sync.sync_daily_batch([symbol], count=days + 30)
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"TickFlow fetch failed: {e}") from e
+            src = "Binance" if is_crypto else "TickFlow"
+            raise HTTPException(status_code=502, detail=f"{src} fetch failed: {e}") from e
         if raw.is_empty():
             return {"symbol": symbol, "name": stock_name, "stock_info": stock_info, "rows": []}
-        # 拉除权因子做前复权 (Starter+ 有权限), 否则空 df → compute_enriched 退回未复权
+        # 拉除权因子做前复权 (Starter+ 有权限, 仅美股), 否则空 df → compute_enriched 退回未复权
         factors = pl.DataFrame()
         capset = getattr(request.app.state, "capabilities", None)
         try:
             from app.tickflow.capabilities import Cap
-            if capset and capset.has(Cap.ADJ_FACTOR):
+            if not is_crypto and capset and capset.has(Cap.ADJ_FACTOR):
                 factors = kline_sync.fetch_adj_factor_single(symbol)
         except Exception as e:  # noqa: BLE001
             logger.debug("单股除权因子拉取失败 %s: %s", symbol, e)
@@ -334,20 +344,23 @@ def get_minute(
     symbol: str = Query(..., description="标的代码"),
     trade_date: date | None = Query(None, alias="date", description="交易日期, 默认最新"),
 ):
-    """读取某只股票某天的分钟 K 线。
+    """读取某只标的某天的分钟 K 线。
 
-    - 本地有完整数据(240条) → 直接返回
-    - 本地无数据或不完整 → 从 TickFlow 实时拉取返回（不写入）
+    - 本地有完整数据(美股 390 条 / 加密 1440 条) → 直接返回
+    - 本地无数据或不完整 → 从数据源实时拉取返回（不写入）
     """
+    from app.markets import US_EASTERN, UTC, is_crypto, trading_date
+
     repo = request.app.state.repo
     stock_info = _get_stock_info(repo, symbol)
     stock_name = stock_info.get("name")
+    asset = "crypto" if is_crypto(symbol) else "stock"
 
     if trade_date is None:
         trade_date = repo.latest_minute_date(symbol)
     if trade_date is None:
-        # 本地无任何分钟K，尝试从 TickFlow 拉取当天
-        trade_date = date.today()
+        # 本地无任何分钟K，尝试从数据源拉取当天
+        trade_date = trading_date(asset)
         df = kline_sync.fetch_minute_single(symbol, trade_date)
         return {
             "symbol": symbol, "name": stock_name, "stock_info": stock_info,
@@ -356,23 +369,21 @@ def get_minute(
 
     df = repo.get_minute(symbol, trade_date)
 
-    # 完整交易日应有 240 条分钟K；如果是今天(盘中)，期望条数按已交易分钟估算
-    expected = 240
-    today = date.today()
-    if trade_date == today:
-        from datetime import datetime as _dt
-        now = _dt.now()
-        h, m = now.hour, now.minute
-        if h < 9 or (h == 9 and m < 30):
-            expected = 0  # 还没开盘
-        elif h < 12 or (h == 12 and m == 0):
-            expected = (h - 9) * 60 + m - 30  # 9:30 起
-        elif h < 13:
-            expected = 120  # 午休
-        elif h < 15:
-            expected = 120 + (h - 13) * 60 + m
-        else:
-            expected = 240
+    # 完整交易日条数: 美股 390 (美东 09:30–16:00 连续), 加密 1440 (UTC 全天)
+    # 若是"今天"(盘中), 期望条数按已交易分钟估算
+    from datetime import datetime as _dt
+    today = trading_date(asset)
+    if asset == "crypto":
+        expected = 1440
+        if trade_date == today:
+            now = _dt.now(UTC)
+            expected = now.hour * 60 + now.minute
+    else:
+        expected = 390
+        if trade_date == today:
+            now = _dt.now(US_EASTERN)
+            elapsed = (now.hour - 9) * 60 + (now.minute - 30)  # 09:30 起
+            expected = max(0, min(390, elapsed))
 
     is_complete = not df.is_empty() and len(df) >= expected * 0.9  # 允许 10% 容差
 
@@ -456,8 +467,8 @@ async def sync_minute(request: Request):
 
         try:
             progress("sync_minute", 5, "解析标的池…")
-            universe = sorted(set(get_pool("watchlist")) | set(get_pool("CN_Equity_A")))
-            # 补充 instruments 全量标的，覆盖北交所、新股等
+            universe = sorted(set(get_pool("watchlist")) | set(get_pool("US_Equity")))
+            # 补充 instruments 全量标的，覆盖新股等
             inst_path = repo.store.data_dir / "instruments" / "instruments.parquet"
             if inst_path.exists():
                 try:
@@ -809,14 +820,14 @@ async def extend_minute_history(request: Request):
 
 
 def _resolve_minute_universe(capset, repo) -> list[str]:
-    """分钟K标的池解析。"""
+    """分钟K标的池解析(TickFlow 分钟K仅覆盖美股)。"""
     from app.tickflow.capabilities import Cap
     if capset.has(Cap.KLINE_MINUTE_BATCH):
         try:
             from app.tickflow.pools import get_pool
-            all_a = get_pool("CN_Equity_A", refresh=True)
-            if all_a:
-                return sorted(all_a)
+            all_us = get_pool("US_Equity", refresh=True)
+            if all_us:
+                return sorted(all_us)
         except Exception:
             pass
     return []

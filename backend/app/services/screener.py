@@ -84,18 +84,6 @@ PRESET_STRATEGIES: dict[str, dict] = {
         "descending": True,
         "limit": 100,
     },
-    "broken_board_recovery": {
-        "name": "断板反包",
-        "description": "连板 ≥2 后断板 1-2 天，出现放量反包信号",
-        "filter": (
-            pl.col("signal_limit_up").fill_null(False)
-            & (pl.col("vol_ratio_5d") >= 1.5)
-            & (pl.col("change_pct") > 0.03)
-        ),
-        "order_by": "change_pct",
-        "descending": True,
-        "limit": 100,
-    },
     "oversold_bounce": {
         "name": "超跌反弹",
         "description": "RSI14 < 30 超卖区 + 当日收阳 + 放量，抄底信号",
@@ -132,14 +120,14 @@ PRESET_STRATEGIES: dict[str, dict] = {
         "descending": True,
         "limit": 100,
     },
-    "consecutive_limit_ups": {
-        "name": "连板股",
-        "description": "当日涨停且连续涨停 ≥ 2 天，强势追涨",
+    "consecutive_up_days": {
+        "name": "连续收涨",
+        "description": "连续收涨 ≥ 3 天 + 5 日动量为正，强势延续",
         "filter": (
-            pl.col("signal_limit_up").fill_null(False)
-            & (pl.col("consecutive_limit_ups") >= 2)
+            (pl.col("consecutive_up_days") >= 3)
+            & (pl.col("momentum_5d") > 0)
         ),
-        "order_by": "consecutive_limit_ups",
+        "order_by": "consecutive_up_days",
         "descending": True,
         "limit": 100,
     },
@@ -251,7 +239,11 @@ class ScreenerService:
 
         读取历史数据作为指标计算的 warmup, 计算完成后只返回目标日期的行。
         """
-        from app.indicators.pipeline import compute_indicators, compute_signals, compute_limit_signals
+        from app.indicators.pipeline import (
+            _compute_turnover_rate,
+            compute_indicators,
+            compute_signals,
+        )
 
         # 加载 warmup 历史 (目标日期前 ~120 天)
         enriched_dir = self.repo.store.data_dir / "kline_daily_enriched"
@@ -281,10 +273,10 @@ class ScreenerService:
         df_full = compute_indicators(df_hist)
         df_full = compute_signals(df_full)
 
-        # 计算涨跌停信号 (需要 instruments)
+        # 计算换手率 (需要 instruments 的 float_shares; 加密为 null)
         instruments = self.repo.get_instruments()
         if instruments is not None and not instruments.is_empty():
-            df_full = compute_limit_signals(df_full, instruments)
+            df_full = _compute_turnover_rate(df_full, instruments)
 
         # 只保留目标日期
         df_result = df_full.filter(pl.col("date") == target_date)
@@ -332,7 +324,11 @@ class ScreenerService:
         # 优先级 3: scan_parquet + compute_indicators (慢路径, ~5s)
         logger.warning("_load_enriched_history cache miss, computing indicators (%s, %d)...",
                        target_date, lookback_days)
-        from app.indicators.pipeline import compute_indicators, compute_signals, compute_limit_signals
+        from app.indicators.pipeline import (
+            _compute_turnover_rate,
+            compute_indicators,
+            compute_signals,
+        )
 
         warmup = 60
         start = target_date - timedelta(days=min((lookback_days + warmup) * 2, 180))
@@ -361,7 +357,7 @@ class ScreenerService:
 
         instruments = self.repo.get_instruments()
         if instruments is not None and not instruments.is_empty():
-            df_full = compute_limit_signals(df_full, instruments)
+            df_full = _compute_turnover_rate(df_full, instruments)
 
         if instruments is not None and not instruments.is_empty():
             inst_cols = [c for c in ["symbol", "name", "total_shares", "float_shares"] if c in instruments.columns]
@@ -529,49 +525,51 @@ class ScreenerService:
 
     @staticmethod
     def _apply_basic_filter(df: pl.DataFrame, bf: dict) -> pl.DataFrame:
-        """应用用户基础参数过滤（boards、价格区间、市值等）"""
+        """应用用户基础参数过滤（价格区间、市值、成交额、换手等）
+
+        market_cap / float_cap / amount / turnover 均为 null-tolerant:
+        加密货币行没有股本/换手率数据 (列值为 null), 条件写成
+        ``is_null() | (表达式)``, 保证缺数据的行不被误杀。
+        口径与 StrategyEngine._basic_filter_expr 对齐。
+        """
         exprs: list[pl.Expr] = []
         if bf.get("price_min") is not None:
             exprs.append(pl.col("close") >= bf["price_min"])
         if bf.get("price_max") is not None:
             exprs.append(pl.col("close") <= bf["price_max"])
+        # 总市值
+        if bf.get("market_cap_min") is not None and "total_shares" in df.columns:
+            mc = pl.col("close") * pl.col("total_shares")
+            exprs.append(mc.is_null() | (mc >= bf["market_cap_min"]))
+        if bf.get("market_cap_max") is not None and "total_shares" in df.columns:
+            mc = pl.col("close") * pl.col("total_shares")
+            exprs.append(mc.is_null() | (mc <= bf["market_cap_max"]))
+        # 流通市值
         if bf.get("float_cap_min") is not None and "float_shares" in df.columns:
-            exprs.append(pl.col("close") * pl.col("float_shares") >= bf["float_cap_min"])
+            fc = pl.col("close") * pl.col("float_shares")
+            exprs.append(fc.is_null() | (fc >= bf["float_cap_min"]))
         if bf.get("float_cap_max") is not None and "float_shares" in df.columns:
-            exprs.append(pl.col("close") * pl.col("float_shares") <= bf["float_cap_max"])
+            fc = pl.col("close") * pl.col("float_shares")
+            exprs.append(fc.is_null() | (fc <= bf["float_cap_max"]))
         if bf.get("amount_min") is not None:
-            exprs.append(pl.col("amount") >= bf["amount_min"])
+            exprs.append(
+                pl.col("amount").is_null() | (pl.col("amount") >= bf["amount_min"])
+            )
         if bf.get("amount_max") is not None:
-            exprs.append(pl.col("amount") <= bf["amount_max"])
+            exprs.append(
+                pl.col("amount").is_null() | (pl.col("amount") <= bf["amount_max"])
+            )
+        # 换手率 (加密为 null → 放行)
         if bf.get("turnover_min") is not None and "turnover_rate" in df.columns:
-            exprs.append(pl.col("turnover_rate") >= bf["turnover_min"])
+            exprs.append(
+                pl.col("turnover_rate").is_null()
+                | (pl.col("turnover_rate") >= bf["turnover_min"])
+            )
         if bf.get("turnover_max") is not None and "turnover_rate" in df.columns:
-            exprs.append(pl.col("turnover_rate") <= bf["turnover_max"])
-        if bf.get("exclude_st") and "name" in df.columns:
-            exprs.append(~pl.col("name").str.contains("(?i)ST|\\*ST|退"))
-        # 板块过滤
-        boards = bf.get("boards")
-        if boards and isinstance(boards, list) and len(boards) > 0:
-            board_exprs: list[pl.Expr] = []
-            for b in boards:
-                if b == "沪主板":
-                    board_exprs.append(pl.col("symbol").str.starts_with("60"))
-                elif b == "深主板":
-                    board_exprs.append(
-                        pl.col("symbol").str.starts_with("00")
-                        | pl.col("symbol").str.starts_with("001")
-                    )
-                elif b == "创业板":
-                    board_exprs.append(
-                        pl.col("symbol").str.starts_with("300")
-                        | pl.col("symbol").str.starts_with("301")
-                    )
-                elif b == "科创板":
-                    board_exprs.append(pl.col("symbol").str.starts_with("688"))
-                elif b == "北交所":
-                    board_exprs.append(pl.col("symbol").str.contains(r"\.BJ$"))
-            if board_exprs:
-                exprs.append(pl.any_horizontal(board_exprs))
+            exprs.append(
+                pl.col("turnover_rate").is_null()
+                | (pl.col("turnover_rate") <= bf["turnover_max"])
+            )
         if exprs:
             return df.filter(pl.all_horizontal(exprs))
         return df

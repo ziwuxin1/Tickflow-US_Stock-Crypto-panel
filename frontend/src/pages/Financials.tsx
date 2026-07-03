@@ -80,7 +80,7 @@ export function Financials() {
                 当前财务数据源需付费,后续会接入免费数据源。如你常用某个免费财务数据源,欢迎在 Issues 中多多推荐哈 ~
               </p>
               <a
-                href="https://github.com/shy3130/tickflow-stock-panel/issues"
+                href="https://github.com/ziwuxin1/Tickflow-US_Stock-Crypto-panel/issues"
                 target="_blank"
                 rel="noreferrer"
                 className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-accent hover:underline"
@@ -303,7 +303,7 @@ export function Financials() {
                   <div className="w-full max-w-xl">
                     <StockFinancialSearch onSelect={pick} />
                   </div>
-                  <div className="text-[11px] text-muted">支持股票代码或名称模糊匹配，如 600000 / 浦发</div>
+                  <div className="text-[11px] text-muted">支持股票代码或名称模糊匹配，如 AAPL / 苹果</div>
                 </div>
               )}
             </div>

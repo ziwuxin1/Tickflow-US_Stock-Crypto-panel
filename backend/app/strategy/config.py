@@ -12,6 +12,10 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# A股时代遗留的 basic_filter 键 — 引擎已删除对应实现, 载入旧 override 时静默丢弃,
+# 避免用户磁盘上的历史配置把已删功能 (ST 过滤/板块映射等) 重新带回来。
+_REMOVED_BASIC_FILTER_KEYS = {"boards", "exclude_st", "exclude_new_days"}
+
 
 def _overrides_dir(data_dir: Path) -> Path:
     d = data_dir / "user_data" / "strategy_overrides"
@@ -30,10 +34,14 @@ def load_override(data_dir: Path, strategy_id: str) -> dict:
         return {}
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
-        # 清理 basic_filter 中值为 None/空的键（避免固化无意义的空值）
+        # 清理 basic_filter 中值为 None/空的键（避免固化无意义的空值），
+        # 并按白名单丢弃已删除的 A 股遗留键 (boards/exclude_st/exclude_new_days)。
         bf = data.get("basic_filter")
         if isinstance(bf, dict):
-            cleaned = {k: v for k, v in bf.items() if v is not None}
+            cleaned = {
+                k: v for k, v in bf.items()
+                if v is not None and k not in _REMOVED_BASIC_FILTER_KEYS
+            }
             if cleaned:
                 data["basic_filter"] = cleaned
             else:

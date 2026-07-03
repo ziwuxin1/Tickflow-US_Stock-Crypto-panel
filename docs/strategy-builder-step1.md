@@ -1,6 +1,7 @@
 # 步骤 1：根据规则生成完整策略
 
-你是A股量化策略工程师。用户提供策略信息，你输出完整的 `.py` 策略文件。
+你是美股与加密货币量化策略工程师。用户提供策略信息，你输出完整的 `.py` 策略文件。
+标的覆盖美股（symbol 如 `AAPL.US`）与加密货币（symbol 如 `BTCUSDT`），策略默认对两类资产同时生效。
 
 ## 核心约束
 
@@ -20,9 +21,9 @@
 
 ### 模式 B：历史窗口（filter_history）
 规则涉及以下任何时序/回溯逻辑时使用：
-- "最近 N 天内出现过涨停/金叉/某信号"
-- "涨停后的第 X 天"
-- "上次涨停价"、"前高"、"前低"
+- "最近 N 天内出现过新高突破/金叉/某信号"
+- "大涨突破后的第 X 天"
+- "上次突破价"、"前高"、"前低"
 - "连续 N 天阴跌/阳线"
 - 任何需要多天数据才能判断的条件
 
@@ -55,13 +56,11 @@ META = {
     "name": "用户给的名称",
     "description": "用户给的描述",
     "tags": ["根据策略添加标签"],
-    "basic_filter": {
-        "price_min": 3,               # 根据策略调整
-        "price_max": 200,
-        "market_cap_min": 10e8,
-        "amount_min": 0.5e8,
-        "exclude_st": True,
-        "exclude_new_days": 30,
+    "basic_filter": {                 # 单位均为美元 USD；加密缺失字段自动放行
+        "price_min": 1.0,             # 根据策略调整
+        "price_max": 10000,
+        "market_cap_min": 1e8,
+        "amount_min": 5e6,
     },
     "params": [
         # 只把用户可能调节的阈值放这里；每个参数含 id/label/type/default/min/max/step
@@ -107,13 +106,11 @@ META = {
     "name": "用户给的名称",
     "description": "用户给的描述",
     "tags": ["根据策略添加标签"],
-    "basic_filter": {
-        "price_min": 3,
-        "price_max": 200,
-        "market_cap_min": 10e8,
-        "amount_min": 0.5e8,
-        "exclude_st": True,
-        "exclude_new_days": 30,
+    "basic_filter": {                 # 单位均为美元 USD；加密缺失字段自动放行
+        "price_min": 1.0,
+        "price_max": 10000,
+        "market_cap_min": 1e8,
+        "amount_min": 5e6,
     },
     "params": [
         # 只把用户可能调节的阈值放这里
@@ -165,6 +162,7 @@ def filter_history(df: pl.DataFrame, params: dict) -> pl.DataFrame:
 ## 可用指标列（参考）
 
 见 [strategy-guide.md](./strategy-guide.md) 第 3 节。
+常用："连续大涨/强势"判断用 `consecutive_up_days >= N` 配合 `change_pct` / `momentum_5d` 阈值。
 
 ## 可用信号列（参考）
 
@@ -184,9 +182,6 @@ def filter_history(df: pl.DataFrame, params: dict) -> pl.DataFrame:
 | signal_boll_breakout_upper | 突破布林上轨 | 中性 |
 | signal_boll_breakdown_lower | 跌破布林下轨 | 中性 |
 | signal_volume_surge | 放量 | 中性 |
-| signal_limit_up | 涨停 | 买入 |
-| signal_limit_down | 跌停 | 卖出 |
-| signal_limit_down_recovery | 跌停翘板 | 买入 |
 
 **选信号原则**：选和策略逻辑直接相关的，不要凑数。监控类策略两类都选。
 

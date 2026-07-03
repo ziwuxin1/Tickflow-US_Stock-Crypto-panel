@@ -101,34 +101,6 @@ export const BUILTIN_SIGNAL_DEFINITIONS: BuiltinSignalDefinition[] = [
     category: '量价',
     description: '成交量显著放大，可作为买入确认、卖出确认或告警条件。',
   },
-  {
-    id: 'signal_limit_up',
-    name: '涨停',
-    kind: 'entry',
-    category: '涨跌停',
-    description: '收盘封住涨停，用于强势股、连板与市场情绪监控。',
-  },
-  {
-    id: 'signal_limit_down',
-    name: '跌停',
-    kind: 'exit',
-    category: '涨跌停',
-    description: '收盘触及跌停，用于风险控制与弱势监控。',
-  },
-  {
-    id: 'signal_limit_down_recovery',
-    name: '跌停翘板',
-    kind: 'entry',
-    category: '涨跌停',
-    description: '盘中触及跌停后回升，常用于短线情绪修复观察。',
-  },
-  {
-    id: 'signal_broken_limit_up',
-    name: '炸板',
-    kind: 'exit',
-    category: '涨跌停',
-    description: '盘中触及涨停但收盘未封住，用于强转弱或分歧监控。',
-  },
 ]
 
 /** 内置原子信号 → 中文标签 */
@@ -156,7 +128,7 @@ const FIELD_LABELS: Record<string, string> = {
   high_60d: '60日最高', low_60d: '60日最低',
   momentum_5d: '5日动量', momentum_20d: '20日动量', momentum_60d: '60日动量',
   atr_14: 'ATR14', annual_vol_20d: '20日年化波动',
-  consecutive_limit_ups: '连板数', consecutive_limit_downs: '跌停连板',
+  consecutive_up_days: '连涨天数',
 }
 
 /**

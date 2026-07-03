@@ -51,10 +51,10 @@ def delete_alert(ts: int, request: Request):
 # ── 演示数据生成 (仅 Dev 页用) ─────────────────────────
 
 _DEMO_STOCKS = [
-    ("600519.SH", "贵州茅台"), ("000001.SZ", "平安银行"), ("300750.SZ", "宁德时代"),
-    ("002594.SZ", "比亚迪"), ("000858.SZ", "五粮液"), ("601318.SH", "中国平安"),
-    ("002475.SZ", "立讯精密"), ("600036.SH", "招商银行"), ("000725.SZ", "京东方A"),
-    ("300059.SZ", "东方财富"),
+    ("AAPL.US", "苹果"), ("NVDA.US", "英伟达"), ("TSLA.US", "特斯拉"),
+    ("MSFT.US", "微软"), ("GOOGL.US", "谷歌"), ("AMZN.US", "亚马逊"),
+    ("META.US", "Meta"), ("AVGO.US", "博通"),
+    ("BTCUSDT", "比特币"), ("ETHUSDT", "以太坊"),
 ]
 _DEMO_TEMPLATES = [
     ("signal", "MA金叉触发", ["signal_ma_golden_5_20"], "info"),
@@ -64,17 +64,17 @@ _DEMO_TEMPLATES = [
     ("price", "涨幅超 5%", [], "warn"),
     ("price", "RSI 极度超卖", [], "warn"),
     ("price", "跌幅超 3%", [], "info"),
-    ("market", "涨停封板", ["signal_limit_up"], "critical"),
-    ("market", "连板异动", ["signal_limit_up"], "warn"),
-    ("market", "炸板", ["signal_broken_limit_up"], "warn"),
+    ("market", "放量创 60 日新高", ["signal_n_day_high", "signal_volume_surge"], "critical"),
+    ("market", "连续 3 日收涨", [], "warn"),
+    ("market", "布林上轨突破", ["signal_boll_breakout_upper"], "warn"),
     # 新策略变更格式
-    ("strategy", "策略「趋势突破」进入 贵州茅台 +2.3%", ["signal_n_day_high", "signal_volume_surge"], "info"),
-    ("strategy", "策略「趋势突破」移出 五粮液 -1.5%", ["signal_ma20_breakdown"], "info"),
-    ("strategy", "策略「新低反转」进入 平安银行 +1.1%", ["signal_n_day_low"], "warn"),
-    ("strategy", "策略「MACD金叉」移出 比亚迪 -0.8%", ["signal_macd_golden"], "info"),
+    ("strategy", "策略「趋势突破」进入 英伟达 +4.3%", ["signal_n_day_high", "signal_volume_surge"], "info"),
+    ("strategy", "策略「趋势突破」移出 特斯拉 -2.5%", ["signal_ma20_breakdown"], "info"),
+    ("strategy", "策略「新低反转」进入 苹果 +1.1%", ["signal_n_day_low"], "warn"),
+    ("strategy", "策略「MACD金叉」移出 比特币 -0.8%", ["signal_macd_golden"], "info"),
     # 批量变更
-    ("strategy", "策略「趋势突破」进入 6 只：平安银行、宁德时代、比亚迪、东方财富、招商银行、立讯精密", [], "info"),
-    ("strategy", "策略「MACD金叉」移出 7 只：京东方A、平安银行、五粮液、立讯精密、招商银行、东方财富、比亚迪", [], "warn"),
+    ("strategy", "策略「趋势突破」进入 6 只：苹果、英伟达、特斯拉、微软、谷歌、比特币", [], "info"),
+    ("strategy", "策略「MACD金叉」移出 7 只：Meta、苹果、亚马逊、博通、微软、以太坊、特斯拉", [], "warn"),
 ]
 
 

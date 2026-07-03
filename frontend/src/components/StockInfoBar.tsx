@@ -2,11 +2,13 @@ import { useState, type ReactNode } from 'react'
 import { Settings2, RadioTower, Star } from 'lucide-react'
 import type { KlineRow, FinancialMetricRecord } from '@/lib/api'
 import { fmtPrice, fmtBigNum, fmtVolume } from '@/lib/format'
+import { BULL_SOFT, BEAR_SOFT } from '@/lib/palette'
 import { ListColumnCustomizer } from '@/components/ListColumnCustomizer'
 import { INFO_GROUPS, type ColumnConfig } from '@/lib/stock-info-fields'
 
-const BULL = '#C74040'
-const BEAR = '#2D9B65'
+// 绿涨红跌（国际惯例）
+const BULL = BULL_SOFT
+const BEAR = BEAR_SOFT
 
 interface Props {
   symbol: string
@@ -44,7 +46,7 @@ function renderExtInline(
     return <span className="tabular-nums">{displayVal}</span>
   }
   if (typeof val === 'boolean') {
-    return <span className={val ? 'text-bull' : 'text-muted'}>{val ? '是' : '否'}</span>
+    return <span className={val ? 'text-success' : 'text-muted'}>{val ? '是' : '否'}</span>
   }
   const str = String(val)
   // 纯文本模式
@@ -120,8 +122,9 @@ export function StockInfoBar({ symbol, name, stockInfo, rows, fields, onFieldsCh
   const floatShares = stockInfo?.float_shares
   const marketCap = totalShares ? close * totalShares : null
   const floatMarketCap = floatShares ? close * floatShares : null
+  // volume 单位已是股(coin), 无需手换算
   const turnoverRate = floatShares && latest.volume
-    ? (Number(latest.volume) * 100 / floatShares * 100)
+    ? (Number(latest.volume) / floatShares * 100)
     : null
 
   const displayName = stockInfo?.name ?? name ?? ''

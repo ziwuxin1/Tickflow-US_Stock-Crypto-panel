@@ -8,14 +8,10 @@ import { Onboarding } from './pages/Onboarding'
 import { Auth } from './pages/Auth'
 import { Data } from './pages/Data'
 import { Monitor } from './pages/Monitor'
-import { Trading } from './pages/Trading'
 import { Dashboard } from './pages/Dashboard'
 import { AnalysisDetail } from './pages/AnalysisDetail'
-import { ConceptAnalysis } from './pages/ConceptAnalysis'
-import { IndustryAnalysis } from './pages/IndustryAnalysis'
 import { StockAnalysis } from './pages/StockAnalysis'
 import { Review } from './pages/Review'
-import { LimitUpLadder } from './pages/LimitUpLadder'
 import { Branding } from './pages/Branding'
 import { Settings } from './pages/Settings'
 import { Indices } from './pages/Indices'
@@ -66,8 +62,6 @@ export const router = createBrowserRouter([
       { path: 'overview', element: <Navigate to="/" replace /> },
       { path: 'analysis', element: <Navigate to="/settings?tab=ext-pages" replace /> },
       { path: 'analysis/:menuId', element: <AnalysisDetail /> },
-      { path: 'concept-analysis', element: <ConceptAnalysis /> },
-      { path: 'industry-analysis', element: <IndustryAnalysis /> },
       { path: 'stock-analysis', element: <StockAnalysis /> },
       { path: 'review', element: <Review /> },
       { path: 'watchlist', element: <Watchlist /> },
@@ -76,8 +70,6 @@ export const router = createBrowserRouter([
       { path: 'financials', element: <Financials /> },
       { path: 'data', element: <Data /> },
       { path: 'monitor', element: <Monitor /> },
-      { path: 'trading', element: <Trading /> },
-      { path: 'limit-ladder', element: <LimitUpLadder /> },
       { path: 'indices', element: <Indices /> },
       { path: 'branding', element: <Branding /> },
       { path: 'settings', element: <Settings /> },

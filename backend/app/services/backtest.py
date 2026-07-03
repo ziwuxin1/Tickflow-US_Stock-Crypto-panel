@@ -81,7 +81,7 @@ class BacktestConfig:
     # 其他参数
     stop_loss_pct: float | None = None       # 例 -0.05 = -5%
     max_hold_days: int | None = None
-    fees_pct: float = 0.0002                 # 万二佣金
+    fees_pct: float = 0.0                    # 美股零佣金默认; 加密请求在 API 层默认 0.001
     slippage_bps: float = 5                  # 5 bps
     # 撮合
     matching: Literal["close_t", "open_t+1"] = "close_t"

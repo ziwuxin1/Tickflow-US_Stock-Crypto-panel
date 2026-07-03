@@ -31,6 +31,32 @@ BACKTEST_SERVER_GUARD_MESSAGE = (
     "当前服务器内存约 1.8GB，回测区间最多支持 6 个月；"
     "更长周期容易触发 OOM，建议在 8GB 以上内存环境或本机运行。"
 )
+# Binance 现货 taker 费率 (0.1%/边), 加密请求的费率默认值。
+CRYPTO_DEFAULT_FEES_PCT = 0.001
+
+
+def _crypto_only(symbols: list[str] | None) -> bool:
+    """symbols 全为加密符号 (无 "." 后缀) 时为 True; 空/None (全市场) 按美股口径。"""
+    from app.markets import is_crypto
+    return bool(symbols) and all(is_crypto(s) for s in symbols)
+
+
+def _market_defaults(symbols: list[str] | None) -> dict:
+    """按资产类返回市场默认参数: 费率 / 年化周期数 / 基准 / 最小交易单位。"""
+    from app import markets
+    if _crypto_only(symbols):
+        return {
+            "fees_pct": CRYPTO_DEFAULT_FEES_PCT,
+            "periods_per_year": markets.PERIODS_PER_YEAR_CRYPTO,
+            "benchmark_symbol": markets.BENCHMARK_CRYPTO,
+            "lot_size": 0.0,  # <=0 允许小数仓位
+        }
+    return {
+        "fees_pct": 0.0,  # 美股零佣金
+        "periods_per_year": markets.PERIODS_PER_YEAR_STOCK,
+        "benchmark_symbol": markets.BENCHMARK_STOCK,
+        "lot_size": 1.0,
+    }
 
 
 def _get_engine(request: Request):
@@ -83,7 +109,8 @@ class BacktestRequest(BaseModel):
     exits: list[str] = []
     stop_loss_pct: float | None = None
     max_hold_days: int | None = None
-    fees_pct: float = 0.0002
+    # None = 按资产类默认 (美股 0.0 / 加密 0.001)
+    fees_pct: float | None = None
     slippage_bps: float = 5
     matching: Literal["close_t", "open_t+1"] = "close_t"
 
@@ -96,6 +123,7 @@ def run(req: BacktestRequest, request: Request):
     end = req.end or date.today()
     start = req.start or (end - timedelta(days=365 * 3))
 
+    defaults = _market_defaults(req.symbols)
     cfg = BacktestConfig(
         symbols=req.symbols,
         start=start,
@@ -104,7 +132,7 @@ def run(req: BacktestRequest, request: Request):
         exits=req.exits,
         stop_loss_pct=req.stop_loss_pct,
         max_hold_days=req.max_hold_days,
-        fees_pct=req.fees_pct,
+        fees_pct=req.fees_pct if req.fees_pct is not None else defaults["fees_pct"],
         slippage_bps=req.slippage_bps,
         matching=req.matching,
     )
@@ -138,8 +166,10 @@ class FactorBacktestRequest(BaseModel):
     n_groups: int = 5
     rebalance: Literal["daily", "weekly", "monthly"] = "monthly"
     weight: Literal["equal", "factor_weight"] = "equal"
-    fees_pct: float = 0.0002
+    # None = 按资产类默认 (美股 0.0/252 · 加密 0.001/365)
+    fees_pct: float | None = None
     slippage_bps: float = 5.0
+    periods_per_year: int | None = None
 
 
 @router.post("/factor/run")
@@ -160,6 +190,7 @@ def factor_run(req: FactorBacktestRequest, request: Request):
             detail=f"指定标的最多支持 {FACTOR_MAX_SYMBOLS} 只，请缩小标的范围。",
         )
 
+    defaults = _market_defaults(symbols)
     cfg = FactorConfig(
         factor_name=req.factor_name,
         symbols=symbols,
@@ -168,8 +199,9 @@ def factor_run(req: FactorBacktestRequest, request: Request):
         n_groups=req.n_groups,
         rebalance=req.rebalance,
         weight=req.weight,
-        fees_pct=req.fees_pct,
+        fees_pct=req.fees_pct if req.fees_pct is not None else defaults["fees_pct"],
         slippage_bps=req.slippage_bps,
+        periods_per_year=req.periods_per_year or defaults["periods_per_year"],
     )
     result = svc.run(cfg)
     return asdict(result)
@@ -190,8 +222,12 @@ class StrategyBacktestRequest(BaseModel):
     matching: Literal["close_t", "open_t+1"] = "open_t+1"
     entry_fill: Literal["close_t", "open_t+1"] | None = None
     exit_fill: Literal["close_t", "open_t+1"] | None = None
-    fees_pct: float = 0.0002
+    # None = 按资产类默认 (美股 0.0/252/SPY.US/整股 · 加密 0.001/365/BTCUSDT/小数仓位)
+    fees_pct: float | None = None
     slippage_bps: float = 5.0
+    lot_size: float | None = None
+    periods_per_year: int | None = None
+    benchmark_symbol: str | None = None
     max_positions: int = 10
     max_exposure_pct: float = 1.0
     initial_capital: float = 1_000_000.0
@@ -213,9 +249,11 @@ def strategy_run(req: StrategyBacktestRequest, request: Request):
     start = _resolve_start(req, end, FACTOR_DEFAULT_DAYS)
     _guard_server_backtest_range(start, end)
 
+    symbols = req.symbols if req.symbols else None
+    defaults = _market_defaults(symbols)
     cfg = StrategyBacktestConfig(
         strategy_id=req.strategy_id,
-        symbols=req.symbols if req.symbols else None,
+        symbols=symbols,
         start=start,
         end=end,
         params=req.params,
@@ -223,8 +261,11 @@ def strategy_run(req: StrategyBacktestRequest, request: Request):
         matching=req.matching,
         entry_fill=req.entry_fill,
         exit_fill=req.exit_fill,
-        fees_pct=req.fees_pct,
+        fees_pct=req.fees_pct if req.fees_pct is not None else defaults["fees_pct"],
         slippage_bps=req.slippage_bps,
+        lot_size=req.lot_size if req.lot_size is not None else defaults["lot_size"],
+        periods_per_year=req.periods_per_year or defaults["periods_per_year"],
+        benchmark_symbol=req.benchmark_symbol or defaults["benchmark_symbol"],
         max_positions=req.max_positions,
         max_exposure_pct=req.max_exposure_pct,
         initial_capital=req.initial_capital,
@@ -273,12 +314,18 @@ def _cleanup_stale_jobs():
 def _make_job_key(
     strategy_id: str, symbols: str | None, start: str | None, end: str | None,
     matching: str, entry_fill: str | None, exit_fill: str | None,
-    fees_pct: float, slippage_bps: float,
+    fees_pct: float | None, slippage_bps: float,
+    lot_size: float | None, periods_per_year: int | None, benchmark_symbol: str | None,
     max_positions: int, max_exposure_pct: float, initial_capital: float, position_sizing: str,
     params: str | None, overrides: str | None,
     mode: str = "position", holding_days: int = 5,
 ) -> str:
-    raw = f"{strategy_id}|{symbols}|{start}|{end}|{matching}|{entry_fill}|{exit_fill}|{fees_pct}|{slippage_bps}|{max_positions}|{max_exposure_pct}|{initial_capital}|{position_sizing}|{params}|{overrides}|{mode}|{holding_days}"
+    raw = (
+        f"{strategy_id}|{symbols}|{start}|{end}|{matching}|{entry_fill}|{exit_fill}"
+        f"|{fees_pct}|{slippage_bps}|{lot_size}|{periods_per_year}|{benchmark_symbol}"
+        f"|{max_positions}|{max_exposure_pct}|{initial_capital}|{position_sizing}"
+        f"|{params}|{overrides}|{mode}|{holding_days}"
+    )
     return hashlib.md5(raw.encode()).hexdigest()[:12]
 
 
@@ -292,8 +339,11 @@ async def strategy_stream(
     matching: str = "open_t+1",
     entry_fill: str | None = None,
     exit_fill: str | None = None,
-    fees_pct: float = 0.0002,
+    fees_pct: float | None = None,
     slippage_bps: float = 5.0,
+    lot_size: float | None = None,
+    periods_per_year: int | None = None,
+    benchmark_symbol: str | None = None,
     max_positions: int = 10,
     max_exposure_pct: float = 1.0,
     initial_capital: float = 1_000_000.0,
@@ -338,7 +388,8 @@ async def strategy_stream(
     job_key = _make_job_key(
         strategy_id, symbols, start, end,
         matching, entry_fill, exit_fill,
-        fees_pct, slippage_bps, max_positions, max_exposure_pct, initial_capital, position_sizing,
+        fees_pct, slippage_bps, lot_size, periods_per_year, benchmark_symbol,
+        max_positions, max_exposure_pct, initial_capital, position_sizing,
         params, overrides,
         mode, holding_days,
     )
@@ -363,9 +414,11 @@ async def strategy_stream(
 
         # 如果是新任务, 启动回测线程
         if is_new and not job.done:
+            symbols_list = [s.strip() for s in symbols.split(",") if s.strip()] if symbols else None
+            defaults = _market_defaults(symbols_list)
             cfg = StrategyBacktestConfig(
                 strategy_id=strategy_id,
-                symbols=[s.strip() for s in symbols.split(",") if s.strip()] if symbols else None,
+                symbols=symbols_list,
                 start=start_date,
                 end=end_date,
                 params=json.loads(params) if params else None,
@@ -373,8 +426,11 @@ async def strategy_stream(
                 matching=matching,
                 entry_fill=entry_fill,
                 exit_fill=exit_fill,
-                fees_pct=fees_pct,
+                fees_pct=fees_pct if fees_pct is not None else defaults["fees_pct"],
                 slippage_bps=slippage_bps,
+                lot_size=lot_size if lot_size is not None else defaults["lot_size"],
+                periods_per_year=periods_per_year or defaults["periods_per_year"],
+                benchmark_symbol=benchmark_symbol or defaults["benchmark_symbol"],
                 max_positions=int(max_positions),
                 max_exposure_pct=float(max_exposure_pct),
                 initial_capital=float(initial_capital),
@@ -447,6 +503,7 @@ async def strategy_cancel(request: Request):
     p = parse_qs(qs)
     def _get(key: str, default: str = "") -> str:
         return p.get(key, [default])[0]
+    # 可选参数缺省时保持 None, 与 /strategy/stream 的 query 默认值一致 (否则 job_key 对不上)。
     job_key = _make_job_key(
         _get("strategy_id"),
         _get("symbols") or None,
@@ -455,8 +512,11 @@ async def strategy_cancel(request: Request):
         _get("matching", "open_t+1"),
         _get("entry_fill") or None,
         _get("exit_fill") or None,
-        float(_get("fees_pct", "0.0002")),
+        float(_get("fees_pct")) if _get("fees_pct") else None,
         float(_get("slippage_bps", "5")),
+        float(_get("lot_size")) if _get("lot_size") else None,
+        int(_get("periods_per_year")) if _get("periods_per_year") else None,
+        _get("benchmark_symbol") or None,
         int(_get("max_positions", "10")),
         float(_get("max_exposure_pct", "1")),
         float(_get("initial_capital", "1000000")),

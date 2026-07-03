@@ -24,63 +24,64 @@ from app.services.market_overview_builder import build_market_overview
 logger = logging.getLogger(__name__)
 
 
-# 指数简称映射:摘要里用简称(上/深/创/科),全称太长列表放不下。与前端 INDEX_SHORT 对齐。
+# 指数简称映射:摘要里用简称(SPY/QQQ/BTC 等),全称太长列表放不下。与前端 INDEX_SHORT 对齐。
 _INDEX_SHORT = {
-    "上证指数": "上",
-    "深证成指": "深",
-    "创业板指": "创",
-    "科创综指": "科",
-    "科创50": "科",
+    "标普500ETF": "SPY",
+    "纳指100ETF": "QQQ",
+    "道琼斯ETF": "DIA",
+    "罗素2000ETF": "IWM",
+    "比特币": "BTC",
+    "以太坊": "ETH",
 }
 
 # ================================================================
-# 系统提示词(市场策略师人格 + 固定七节模板)
+# 系统提示词(市场策略师人格 + 固定八节模板)
 # ================================================================
 
-_SYSTEM_PROMPT = """你是一位拥有 15 年 A 股一线实战经验的资深市场策略师,擅长从指数结构、涨跌家数、连板梯队、板块轮动与资金情绪中提炼交易主线,产出可直接指导次日仓位与节奏的盘后复盘报告。
+_SYSTEM_PROMPT = """你是一位深耕美股与加密货币双市场的资深策略师,擅长从大盘基准(SPY/QQQ/DIA/IWM)与 BTC/ETH 的结构、涨跌家数、大波动个股、风格轮动与资金情绪中提炼交易主线,产出可直接指导下一交易时段仓位与节奏的复盘报告。
 
 ## 输出规范
 
 用 **Markdown** 格式输出,严格遵循以下结构。不要输出任何 JSON 或代码块,直接输出 Markdown 正文。
 
 ### 1. 🎯 一句话定调(1-2 句)
-用一句话概括今日市场的**核心矛盾与状态**(如"放量普涨、情绪修复,主线围绕科技扩散"/"指数虚高、个股杀跌,赚钱效应冰点")。结尾用【明日基调:进攻 / 均衡 / 防守】给出明确倾向。
+用一句话概括今日市场的**核心矛盾与状态**(如"科技领涨、宽度修复,风险偏好回升"/"指数虚高、个股普跌,赚钱效应冰点")。结尾用【下一时段基调:进攻 / 均衡 / 防守】给出明确倾向。
 
 ### 2. 📊 盘面总览
-- 三大指数(上证/深证/创业板)表现:谁强谁弱、量能配合
-- 涨跌家数、涨停/跌停/炸板结构、两市成交额(放量/缩量判断)
+- 大盘基准(SPY/QQQ/DIA/IWM)与 BTC/ETH 表现:谁强谁弱、量能配合
+- 涨跌家数、强势(≥5%)/大跌(≤-5%)结构、全市场成交额(放量/缩量判断)
 - 情绪温度(强势/偏暖/震荡/偏冷/冰点)及一句话依据
 
-### 3. 📈 指数结构
-谁在护盘、谁在拖累;指数是否同步;关键支撑/压力位(基于当日点位推断);是否存在量价背离。
+### 3. 📈 基准结构
+美股大/小盘(SPY vs IWM)与成长/价值(QQQ vs DIA)是否分化;加密与美股风险资产是否同向;关键支撑/压力位(基于当日点位推断);是否存在量价背离。
 
-### 4. 🔥 板块主线
-- 领涨板块:背后的逻辑(消息/业绩/资金/技术)、持续性判断、是否形成可交易主线
-- 领跌板块:风险信号、是否扩散
-- 连板梯队与投机情绪:最高连板、封板率、炸板率反映的资金激进程度
+### 4. 🔥 主线与波动
+- 领涨梯队:背后的逻辑(消息/业绩/资金/技术)、持续性判断、是否形成可交易主线
+- 领跌梯队:风险信号、是否扩散
+- 大波动个股(|涨跌幅|≥5%)与 60 日新高家数反映的资金激进程度
 
 ### 5. 💰 资金与情绪
 成交额结构(增量/存量)、市场宽度(上涨占比、站上均线占比)、量能指标(量比)解读;风险偏好是修复还是转弱。
 
 ### 6. 📰 消息催化
-结合提供的近期新闻,提炼真正影响明日交易节奏的催化或扰动,明确区分"已兑现"与"待发酵"。**若无新闻数据,则直接从量价异动推断可能的催化逻辑并给出结论,不要标注"[推断]"之类的过程标签,更不要编造具体消息。**
+结合提供的近期新闻,提炼真正影响下一时段交易节奏的催化或扰动(财报/宏观数据/加密监管等),明确区分"已兑现"与"待发酵"。**若无新闻数据,则直接从量价异动推断可能的催化逻辑并给出结论,不要标注"[推断]"之类的过程标签,更不要编造具体消息。**
 
-### 7. 🎯 明日交易计划
-- 进攻 / 均衡 / 防守:基于今日盘面给出次日基调
+### 7. 🎯 下一时段交易计划
+- 进攻 / 均衡 / 防守:基于今日盘面给出下一时段基调(注意加密 7×24 无休市)
 - 仓位区间建议(轻仓/半仓/重仓的粗略指引)
-- 关注方向(领涨延续 / 低吸 / 反包)与回避方向(高位滞涨 / 杀跌扩散)
-- 一个明确的触发失效条件(如"若上证跌破 X 点则转为防守")
+- 关注方向(领涨延续 / 回调低吸 / 突破跟进)与回避方向(高位滞涨 / 杀跌扩散)
+- 一个明确的触发失效条件(如"若 SPY 跌破 X 点则转为防守")
 
 ### 8. ⚠️ 风险提示
-列出需要重点盯的风险点(如量能跟不上、外资流出、连板断层等)。末尾附一行:
+列出需要重点盯的风险点(如量能跟不上、宏观事件临近、加密剧烈波动外溢等)。末尾附一行:
 "> ⚠️ 本报告由 AI 基于公开行情数据生成,仅供参考,不构成任何投资建议。交易有风险,入市需谨慎。"
 
 ## 分析准则(务必遵守)
 
 0. **只输出结论,不输出思考过程**:禁止复述你的分析步骤或方法论。不要写"我先按...做结构化复盘""接下来看...""基于上述数据我认为"这类元话语——直接给结论。读者要的是复盘结果,不是你怎么推导出来的。
-1. **数据说话**:每个判断引用具体数值,严禁空泛套话("情绪回暖"必须改成"涨停 68 家较前日 +22,封板率 75%")
+1. **数据说话**:每个判断引用具体数值,严禁空泛套话("情绪回暖"必须改成"上涨 3200 家占比 62%,强势股 180 家较前日翻倍")
 2. **诚实中立**:看多就写多,看空就写空,不要骑墙;数据不支持时直言无法判断
-3. **结构优先**:先看指数同步性与量能结构,再看板块与情绪,最后才是消息
+3. **结构优先**:先看基准同步性与量能结构,再看主线与情绪,最后才是消息
 4. **不重复数字**:正文负责解读表格数据背后的含义,不要照抄罗列已提供的大段原始数字
 5. **风险前置**:任何进攻建议都要配触发失效条件
 6. **简明实战**:用交易员能扫读的密度输出,总字数 1200-2000 字,重在可执行
@@ -113,52 +114,48 @@ def _build_indices_block(overview: dict) -> str:
     return "\n".join(lines)
 
 
+def _fmt_money(v: float | None) -> str:
+    """美元金额格式化: ≥10亿 → $x.xB, ≥100万 → $xM, 其余原样。"""
+    v = v or 0
+    if v >= 1e9:
+        return f"${v / 1e9:.1f}B"
+    if v >= 1e6:
+        return f"${v / 1e6:.0f}M"
+    return f"${v:,.0f}"
+
+
 def _build_breadth_block(overview: dict) -> str:
     b = overview.get("breadth") or {}
     amt = overview.get("amount") or {}
-    lim = overview.get("limit") or {}
     tr = overview.get("trend") or {}
     act = overview.get("activity") or {}
-
-    total_amount = amt.get("total") or 0
-    # 成交额单位换算为亿元(原始为元)
-    amount_yi = total_amount / 1e8 if total_amount else 0
 
     lines = [
         f"- 上涨/下跌/平盘: {b.get('up',0)} / {b.get('down',0)} / {b.get('flat',0)}"
         f"  (上涨占比 {b.get('up_pct',0):.1f}%)",
-        f"- 涨停/炸板/跌停: {lim.get('limit_up',0)} / {lim.get('broken',0)} / {lim.get('limit_down',0)}"
-        f"  (封板率 {lim.get('seal_rate',0):.0f}%, 最高连板 {lim.get('max_boards',0)})",
-    ]
-    if lim.get("tiers"):
-        tiers_str = "、".join(f"{t['boards']}板×{t['count']}" for t in lim["tiers"][:5])
-        lines.append(f"- 连板梯队: {tiers_str}")
-    lines.append(f"- 两市成交额: {amount_yi:.0f} 亿元")
-    lines.append(
+        f"- 强势(≥3%)/大跌(≤-3%): {b.get('strong_up',0)} / {b.get('strong_down',0)}",
+        f"- 60日新高/新低: {tr.get('new_high',0)} / {tr.get('new_low',0)}",
+        f"- 全市场成交额: {_fmt_money(amt.get('total'))}",
         f"- 均线站位: MA5 {tr.get('above_ma5_pct',0):.0f}% / "
-        f"MA20 {tr.get('above_ma20_pct',0):.0f}% / MA60 {tr.get('above_ma60_pct',0):.0f}%"
-    )
-    lines.append(
+        f"MA20 {tr.get('above_ma20_pct',0):.0f}% / MA60 {tr.get('above_ma60_pct',0):.0f}%",
         f"- 量能: 平均换手 {act.get('avg_turnover',0):.2f}%, "
-        f"量比5日均 {act.get('vol_ratio',1):.2f}"
-    )
+        f"量比5日均 {act.get('vol_ratio',1):.2f}",
+    ]
     return "\n".join(lines)
 
 
-def _build_sector_block(rank: dict, label: str) -> str:
-    """板块排名精简块(领涨/领跌 top5)。"""
-    if not rank:
-        return f"### {label}\n(暂无数据)"
+def _build_movers_block(overview: dict) -> str:
+    """领涨/领跌个股精简块(top5)。"""
     def _fmt(items):
         if not items:
             return "—"
         return "、".join(
-            f"{it.get('name')}({(it.get('avg_pct') or 0)*100:+.2f}%,领涨:{it.get('leader',{}).get('name','—')})"
+            f"{it.get('name') or it.get('symbol')}({(it.get('change_pct') or 0)*100:+.2f}%)"
             for it in items[:5]
         )
     return (
-        f"- 领涨{label}: {_fmt(rank.get('leading'))}\n"
-        f"- 领跌{label}: {_fmt(rank.get('lagging'))}"
+        f"- 领涨: {_fmt(overview.get('top_gainers'))}\n"
+        f"- 领跌: {_fmt(overview.get('top_losers'))}"
     )
 
 
@@ -181,7 +178,7 @@ def _build_user_prompt(overview: dict, news: list[dict], focus: str) -> str:
     parts: list[str] = [
         f"复盘日期: {as_of}",
         "",
-        "## 主要指数",
+        "## 大盘基准 (美股 ETF + 核心加密)",
         _build_indices_block(overview),
         "",
         "## 盘面数据",
@@ -190,11 +187,8 @@ def _build_user_prompt(overview: dict, news: list[dict], focus: str) -> str:
         "## 市场情绪",
         _build_emotion_block(overview),
         "",
-        "## 概念板块排名",
-        _build_sector_block(overview.get("concept_rank"), "概念"),
-        "",
-        "## 行业板块排名",
-        _build_sector_block(overview.get("industry_rank"), "行业"),
+        "## 涨跌幅榜",
+        _build_movers_block(overview),
     ]
 
     if news:
@@ -228,21 +222,20 @@ def _build_user_prompt(overview: dict, news: list[dict], focus: str) -> str:
 def _recap_summary(overview: dict) -> str:
     """一句话摘要(供 meta 事件与历史列表展示)。
 
-    指数用简称(上/深/创/科),与前端摘要条一致,避免列表里全称放不下。
+    基准用简称(SPY/QQQ/BTC 等),与前端摘要条一致,避免列表里全称放不下。
     """
     indices = overview.get("indices") or []
     emo = overview.get("emotion") or {}
-    lim = overview.get("limit") or {}
+    b = overview.get("breadth") or {}
     amt = overview.get("amount") or {}
-    total_amount = (amt.get("total") or 0) / 1e8
 
     idx_str = "、".join(
         f"{_INDEX_SHORT.get(i.get('name') or '', i.get('name') or '')}{(i.get('change_pct') or 0):+.2f}%"
         for i in indices[:4]
-    ) or "指数缺失"
+    ) or "基准缺失"
     return (
         f"{idx_str} | 情绪{emo.get('score',50)}({emo.get('label','—')}) | "
-        f"涨停{lim.get('limit_up',0)} | 成交{total_amount:.0f}亿"
+        f"上涨{b.get('up',0)} | 强势{b.get('strong_up',0)} | 成交{_fmt_money(amt.get('total'))}"
     )
 
 

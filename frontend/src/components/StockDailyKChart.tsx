@@ -32,9 +32,7 @@ interface Props {
   markers?: ChartMarker[]
   ranges?: ChartRange[]
   priceLines?: ChartPriceLine[]
-  showLimitMarkers?: boolean
   showIndicatorControls?: boolean
-  showMarkerToggle?: boolean
   showMA?: boolean
   showInfoBar?: boolean
   visibleBars?: number
@@ -77,20 +75,6 @@ export function toOHLC(rows: KlineRow[]): OHLC[] {
     }))
 }
 
-function buildLimitUpMarkers(rows: KlineRow[]): ChartMarker[] {
-  const markers: ChartMarker[] = []
-  for (const r of rows) {
-    const date = typeof r.date === 'string' ? r.date.slice(0, 10) : String(r.date)
-    if (r.signal_broken_limit_up) {
-      markers.push({ date, kind: 'neutral', above: true, color: '#8B5CF6', label: '炸' })
-    } else if (r.signal_limit_up) {
-      const boards: number = r.consecutive_limit_ups ?? 1
-      markers.push({ date, kind: 'buy', above: true, color: '#FACC15', label: boards <= 1 ? '板' : String(boards) })
-    }
-  }
-  return markers
-}
-
 export function getDefaultRange(): { start: string; end: string } {
   const now = new Date()
   const end = now.toISOString().slice(0, 10)
@@ -114,9 +98,7 @@ export function StockDailyKChart({
   markers,
   ranges,
   priceLines,
-  showLimitMarkers = true,
   showIndicatorControls = true,
-  showMarkerToggle = true,
   showMA = true,
   showInfoBar = true,
   visibleBars = 60,
@@ -126,7 +108,6 @@ export function StockDailyKChart({
   extColumns,
 }: Props) {
   const [activeIndicators, setActiveIndicators] = useState<string[]>(['vol'])
-  const [showMarkers, setShowMarkers] = useState(true)
   const dateRange = externalDateRange ?? getDefaultRange()
   const days = useMemo(() => rangeDays(dateRange), [dateRange])
 
@@ -140,11 +121,7 @@ export function StockDailyKChart({
 
   const rows = useMemo(() => toOHLC(kline.data?.rows ?? []), [kline.data?.rows])
   const stockInfo = kline.data?.stock_info
-  const limitMarkers = useMemo(() => buildLimitUpMarkers(kline.data?.rows ?? []), [kline.data?.rows])
-  const allMarkers = useMemo(() => [
-    ...(markers ?? []),
-    ...(showLimitMarkers ? limitMarkers : []),
-  ], [limitMarkers, markers, showLimitMarkers])
+  const allMarkers = useMemo(() => [...(markers ?? [])], [markers])
 
   const toggleIndicator = useCallback((key: string) => {
     setActiveIndicators(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
@@ -194,18 +171,6 @@ export function StockDailyKChart({
               {ind.label}
             </button>
           ))}
-          {showMarkerToggle && showLimitMarkers && (
-            <button
-              onClick={() => setShowMarkers(v => !v)}
-              className={`ml-auto px-2 py-0.5 rounded text-[10px] font-mono cursor-pointer transition-colors ${
-                showMarkers
-                  ? 'text-[#FACC15] bg-[#FACC15]/10'
-                  : 'bg-elevated text-muted hover:text-secondary'
-              }`}
-            >
-              异动
-            </button>
-          )}
         </div>
       )}
       {kline.isLoading && <div className="text-sm text-muted py-4">加载中…</div>}
@@ -222,7 +187,7 @@ export function StockDailyKChart({
           height={chartHeight - 22}
           showMA={showMA}
           showInfoBar={showInfoBar}
-          showMarkers={showMarkers}
+          showMarkers={true}
           stockInfo={stockInfo}
           symbol={symbol}
           linkedPrice={linkedPrice}

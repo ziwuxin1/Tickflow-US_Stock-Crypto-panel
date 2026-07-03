@@ -1,7 +1,8 @@
 """标的维表同步服务。
 
-盘前 9:10 调用 tf.exchanges.get_instruments("SH"/"SZ"/"BJ", type="stock")
-获取全量标的元数据，flatten ext 字段，写入 instruments.parquet。
+美股: 盘前调用 tf.exchanges.get_instruments("US", type="stock") 获取全量标的元数据,
+flatten ext 字段; 加密: binance_provider.fetch_crypto_instruments() 拉 USDT 现货交易对
+(exchange="BINANCE" region="CRYPTO" type="crypto")。两类合并写入同一 instruments.parquet。
 
 Starter+ 盘后可用 quotes.get(universes) 顺便补充 name。
 """
@@ -17,7 +18,7 @@ from app.tickflow.client import get_client
 
 logger = logging.getLogger(__name__)
 
-_EXCHANGES = ["SH", "SZ", "BJ"]
+_EXCHANGES = ["US"]
 
 
 def _flatten_instruments(items: list[dict]) -> list[dict]:
@@ -37,16 +38,58 @@ def _flatten_instruments(items: list[dict]) -> list[dict]:
         row["total_shares"] = ext.get("total_shares")
         row["float_shares"] = ext.get("float_shares")
         row["tick_size"] = ext.get("tick_size")
-        row["limit_up"] = ext.get("limit_up")
-        row["limit_down"] = ext.get("limit_down")
         rows.append(row)
     return rows
 
 
-def sync_instruments(data_dir: Path) -> int:
-    """全量同步标的维表 → data/instruments/instruments.parquet。
+def _fetch_crypto_rows() -> list[dict]:
+    """从 Binance 拉加密 instruments, 对齐美股行结构(缺失字段置 None)。"""
+    from app.data_providers import binance_provider
 
-    返回写入的行数。
+    try:
+        inst = binance_provider.fetch_crypto_instruments()
+    except Exception as e:
+        logger.warning("crypto instruments fetch failed: %s", e)
+        return []
+    if inst.is_empty():
+        return []
+
+    # CoinGecko 市值/流通量补充(免 key): 用流通量填 total_shares/float_shares,
+    # 让加密的市值(close×流通量)与换手率(成交量/流通量)走通现有机制。失败则留 None。
+    from app.config import settings
+    from app.data_providers import coingecko_provider
+    try:
+        cg = coingecko_provider.fetch_crypto_market_data(limit=settings.crypto_universe_size)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("CoinGecko 市值补充失败, 加密流通量留空: %s", e)
+        cg = {}
+
+    rows: list[dict] = []
+    for r in inst.iter_rows(named=True):
+        sym = r.get("symbol")
+        info = cg.get(sym) or {}
+        circ = info.get("circulating_supply")
+        rows.append({
+            "symbol": sym,
+            "name": r.get("name"),
+            "code": r.get("code") or sym,
+            "exchange": "BINANCE",
+            "region": "CRYPTO",
+            "type": "crypto",
+            "listing_date": None,
+            # total_shares/float_shares 均用流通量: market_cap=close×total_shares=市值,
+            # turnover_rate=volume/float_shares=换手率(成交量/流通量)。
+            "total_shares": circ,
+            "float_shares": circ,
+            "tick_size": None,
+        })
+    return rows
+
+
+def sync_instruments(data_dir: Path) -> int:
+    """全量同步标的维表(美股 + 加密) → data/instruments/instruments.parquet。
+
+    返回写入的行数。任一数据源失败不阻断另一侧(至少有一侧成功才写盘)。
     """
     tf = get_client()
     all_rows: list[dict] = []
@@ -60,10 +103,15 @@ def sync_instruments(data_dir: Path) -> int:
         except Exception as e:
             logger.warning("get_instruments(%s) failed: %s", ex, e)
 
+    crypto_rows = _fetch_crypto_rows()
+    if crypto_rows:
+        all_rows.extend(crypto_rows)
+        logger.info("instruments BINANCE: %d crypto pairs", len(crypto_rows))
+
     if not all_rows:
         return 0
 
-    df = pl.DataFrame(all_rows)
+    df = pl.DataFrame(all_rows, infer_schema_length=None)
     df = df.with_columns(pl.lit(date.today()).alias("as_of"))
 
     out = data_dir / "instruments" / "instruments.parquet"
@@ -78,9 +126,9 @@ def enrich_names_from_quotes(
     data_dir: Path,
     quotes_data: list[dict],
 ) -> int:
-    """从 quotes 响应中提取 name，更新 instruments 维表（兜底补充）。
+    """从 quotes 响应中提取 name,更新 instruments 维表(兜底补充)。
 
-    盘后 quotes.get(universes) 返回的数据中包含 ext.name，
+    盘后 quotes.get(universes) 返回的数据中包含 ext.name,
     用来补充 instruments 中可能缺失的 name。
     """
     if not quotes_data:

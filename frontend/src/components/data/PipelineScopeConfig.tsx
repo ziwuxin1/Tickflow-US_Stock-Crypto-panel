@@ -3,7 +3,7 @@ import { Check, Loader2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 
-type PullKey = 'pipeline_pull_a_share' | 'pipeline_pull_etf' | 'pipeline_pull_index'
+type PullKey = 'pipeline_pull_us_equity' | 'pipeline_pull_crypto' | 'pipeline_pull_etf' | 'pipeline_pull_index'
 
 interface ScopeItem {
   key: PullKey
@@ -13,9 +13,10 @@ interface ScopeItem {
 }
 
 const ITEMS: ScopeItem[] = [
-  { key: 'pipeline_pull_a_share', label: 'A股', desc: '沪深京 A 股日K(约 5500 只)', defaultOn: true },
-  { key: 'pipeline_pull_index', label: '指数', desc: '主要市场指数(默认全量约 600 只)', defaultOn: true },
-  { key: 'pipeline_pull_etf', label: 'ETF', desc: '场内交易基金(约 1500 只,首次较慢)', defaultOn: false },
+  { key: 'pipeline_pull_us_equity', label: '美股', desc: '美股全市场日K(约 1.2 万只, 含 ETF)', defaultOn: true },
+  { key: 'pipeline_pull_crypto', label: '加密货币', desc: 'Binance USDT 现货主流币种日K(免 Key)', defaultOn: true },
+  { key: 'pipeline_pull_index', label: '基准指数', desc: 'SPY/QQQ 等大盘基准 + BTC/ETH', defaultOn: true },
+  { key: 'pipeline_pull_etf', label: 'ETF(独立通道)', desc: '美股 ETF 已含在主市场,一般无需开启', defaultOn: false },
 ]
 
 export function PipelineScopeConfig() {
@@ -35,11 +36,11 @@ export function PipelineScopeConfig() {
   return (
     <div className="space-y-2.5">
       <p className="text-xs text-secondary leading-relaxed">
-        勾选盘后管道每次自动拉取的数据类型。仅影响后续同步,已存储的历史数据不受影响。
+        勾选每日管道自动拉取的数据类型。仅影响后续同步,已存储的历史数据不受影响。
       </p>
       <div className="space-y-1.5">
         {ITEMS.map((item) => {
-          const locked = item.key === 'pipeline_pull_a_share'
+          const locked = item.key === 'pipeline_pull_us_equity'
           const on = locked || getValue(item.key, item.defaultOn)
           return (
             <div key={item.key}>

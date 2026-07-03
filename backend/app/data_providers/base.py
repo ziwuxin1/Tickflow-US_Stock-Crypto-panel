@@ -1,7 +1,7 @@
 """Provider contracts for external market data sources.
 
-The first implementation wraps TickFlow. Other providers (Tushare/AkShare/etc.)
-should return the same normalized Polars schemas so storage, indicators and
+Implementations wrap TickFlow (US equities) and Binance (crypto spot). All
+providers return the same normalized Polars schemas so storage, indicators and
 backtests stay data-source agnostic.
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import Literal, Protocol
 
 import polars as pl
 
-AssetType = Literal["stock", "index", "etf"]
+AssetType = Literal["stock", "index", "etf", "crypto"]
 
 
 @dataclass(frozen=True)

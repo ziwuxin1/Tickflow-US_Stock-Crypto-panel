@@ -8,13 +8,13 @@ export function ExtDataApiPanel({ config, copied, setCopied }: {
 }) {
   const endpoint = `POST /api/ext-data/${config.id}/ingest`
 
-  const exampleRow: Record<string, unknown> = { symbol: '000001.SZ' }
+  const exampleRow: Record<string, unknown> = { symbol: 'AAPL.US' }
   for (const f of config.fields) {
     if (f.name === 'symbol' || f.name === 'code') continue
     exampleRow[f.name] = f.dtype === 'int' ? 100 : f.dtype === 'float' ? 1.5 : f.dtype === 'bool' ? true : '示例'
   }
   if (config.fields.some(f => f.name === 'code')) {
-    exampleRow['code'] = '000001'
+    exampleRow['code'] = 'AAPL'
   }
   const exampleBody = {
     date: config.mode === 'timeseries' ? '2025-01-15' : undefined,

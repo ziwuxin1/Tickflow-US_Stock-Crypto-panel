@@ -5,6 +5,7 @@ import { StockPanel } from '@/components/StockPanel'
 import type { ChartPriceLine, ChartRange } from '@/components/EChartsCandlestick'
 import type { StrategyBacktestTrade } from '@/lib/api'
 import { fmtPct, fmtPrice, priceColorClass } from '@/lib/format'
+import { BULL_SOFT, BEAR_SOFT } from '@/lib/palette'
 
 interface Props {
   trade: StrategyBacktestTrade | null
@@ -21,8 +22,9 @@ function fmtMoney(v: number | null | undefined): string {
   if (v == null || Number.isNaN(Number(v))) return '—'
   const n = Number(v)
   const abs = Math.abs(n)
-  if (abs >= 100_000_000) return `${(n / 100_000_000).toFixed(2)}亿`
-  if (abs >= 10_000) return `${(n / 10_000).toFixed(2)}万`
+  if (abs >= 1e9) return `${(n / 1e9).toFixed(2)}B`
+  if (abs >= 1e6) return `${(n / 1e6).toFixed(2)}M`
+  if (abs >= 1e3) return `${(n / 1e3).toFixed(2)}K`
   return n.toFixed(0)
 }
 
@@ -74,14 +76,14 @@ export function TradeKlineModal({ trade, onClose }: Props) {
       {
         value: Number(trade.entry_price),
         label: `买入价 ${fmtPrice(trade.entry_price)}`,
-        color: '#C74040',
+        color: BULL_SOFT,
         start,
         end,
       },
       {
         value: Number(trade.exit_price),
         label: `卖出价 ${fmtPrice(trade.exit_price)}`,
-        color: '#2D9B65',
+        color: BEAR_SOFT,
         start,
         end,
       },
@@ -156,8 +158,6 @@ export function TradeKlineModal({ trade, onClose }: Props) {
                 dateRange={dateRange}
                 ranges={ranges}
                 priceLines={priceLines}
-                showLimitMarkers={false}
-                showMarkerToggle={false}
                 showIntraday={showIntraday}
                 onSelectDate={() => { if (!showIntraday) setShowIntraday(true) }}
               />

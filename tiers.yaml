@@ -1,4 +1,4 @@
-# tickflow-stock-panel —— TickFlow 推荐套餐能力对照表(§5.2)
+# tickflow-us-stock-crypto-panel —— TickFlow(美股 US_Equity)推荐套餐能力对照表(§5.2)
 #
 # 仅用途:
 #   1. 启动期能力探测决定试探顺序
@@ -6,6 +6,8 @@
 #   3. 加购建议时的价格预估
 #
 # 业务代码永远不读这张表,只读运行时探测出的 CapabilitySet。
+# 本表只约束 TickFlow(美股)通道;加密货币走 Binance 公共行情端点,免 key、
+# 不经过档位探测,与此表无关。
 # 来源:https://tickflow.org/pricing/
 # 频率单位:次/分钟。batch 单位:标的/次。
 #
@@ -17,10 +19,10 @@
 #
 # 说明(2026-06-24 5 档重构):
 #   none  = 无 key / 乱填 / 无效 key。运行时走 free-api 服务器(free 通道),
-#           仅历史日K(含批量),无实时行情。不存 API Key。
+#           仅美股历史日K(含批量),无实时行情。不存 API Key。
 #   free  = 免费有效 key(付费端点验证:有单只日K、无复权因子)。
 #           历史/盘后日K仍走 free-api 服务器；实时行情走付费服务器按标的接口。
-#           可用于自选股实时监控:10 次/分,每次最多 5 标的。
+#           可用于自选股(美股标的)实时监控:10 次/分,每次最多 5 标的。
 #   none 与 free 的历史日K通道相同(free-api),区别在于 free 有付费服务器按标的实时权限。
 #   starter+ 才走付费端点 api.tickflow.org,有实时行情。
 

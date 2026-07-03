@@ -13,8 +13,9 @@ export function StrategyNavChart({ result }: Props) {
     const moneyFmt = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 })
     const valueFmt = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     const axisMoneyFmt = (v: number) => {
-      if (Math.abs(v) >= 100_000_000) return `${(v / 100_000_000).toFixed(1)}亿`
-      if (Math.abs(v) >= 10_000) return `${(v / 10_000).toFixed(0)}万`
+      if (Math.abs(v) >= 1e9) return `${(v / 1e9).toFixed(1)}B`
+      if (Math.abs(v) >= 1e6) return `${(v / 1e6).toFixed(1)}M`
+      if (Math.abs(v) >= 1e4) return `${(v / 1e3).toFixed(0)}K`
       return moneyFmt.format(v)
     }
     const dates = result.equity_curve.map(r => r.date.slice(0, 10))
@@ -53,7 +54,7 @@ export function StrategyNavChart({ result }: Props) {
         {
           type: 'value', gridIndex: 0,
           scale: true,
-          name: hasBenchmark ? '上证点位' : '策略资金',
+          name: hasBenchmark ? '基准点位' : '策略资金',
           nameTextStyle: { color: hasBenchmark ? 'rgba(148,163,184,0.55)' : '#64748b', fontSize: 10, padding: [0, 0, 4, 0] },
           axisLabel: {
             color: hasBenchmark ? 'rgba(148,163,184,0.55)' : '#64748b',

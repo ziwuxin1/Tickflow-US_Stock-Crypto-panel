@@ -34,7 +34,7 @@ OPS = {">", ">=", "<", "<=", "==", "!="}
 ALLOWED_FIELDS: frozenset[str] = frozenset({
     # 行情
     "open", "high", "low", "close", "volume", "amount", "turnover_rate",
-    "consecutive_limit_ups", "consecutive_limit_downs",
+    "consecutive_up_days",
     # 基础
     "prev_close", "change_pct", "change_amount", "amplitude",
     # 均线 / 指数均线

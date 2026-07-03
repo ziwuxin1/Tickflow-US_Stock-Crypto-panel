@@ -34,8 +34,12 @@ class MatcherConfig:
     matching: Literal["close_t", "open_t+1"] = "close_t"
     entry_fill: Literal["close_t", "open_t+1"] | None = None
     exit_fill: Literal["close_t", "open_t+1"] | None = None
-    fees_pct: float = 0.0002
+    fees_pct: float = 0.0  # 美股零佣金默认; 加密请求在 API 层默认 0.001
     slippage_bps: float = 5.0
+    # 最小交易单位 (股/份): 美股默认 1 股; <=0 表示允许小数仓位 (加密货币)。
+    lot_size: float = 1.0
+    # 年化周期数: 美股 252 个交易日, 加密货币 365 天。
+    periods_per_year: int = 252
     stop_loss_pct: float | None = None
     take_profit_pct: float | None = None
     trailing_stop_pct: float | None = None
@@ -242,141 +246,6 @@ class BacktestEngine:
 
     # ── 撮合模拟 ──────────────────────────────────────
 
-    def simulate(
-        self,
-        panel: pl.DataFrame,
-        entries: pl.Series | None,
-        exits: pl.Series | None,
-        config: MatcherConfig,
-    ) -> SimResult:
-        """纯 NumPy 撮合模拟 — 逐 symbol 状态机。"""
-        if panel.is_empty():
-            return self._empty_result()
-
-        n = len(panel)
-        panel_dates = panel["date"].to_numpy()
-        panel_symbols = panel["symbol"].to_numpy()
-
-        # 构建信号数组
-        ent = np.zeros(n, dtype=bool)
-        ext = np.zeros(n, dtype=bool)
-        if entries is not None and len(entries) == n:
-            ent = entries.to_numpy().astype(bool)
-        if exits is not None and len(exits) == n:
-            ext = exits.to_numpy().astype(bool)
-
-        if not ent.any():
-            return self._empty_result()
-
-        # 成交口径: entry/exit 可分别配置 close_t (信号当日收盘) 或 open_t+1 (次日开盘)。
-        # open_t+1 时信号右移 1 天 (用前一根的信号 + 当根的 open 成交)。
-        open_prices = panel["open"].to_numpy()
-        close_prices = panel["close"].to_numpy()
-
-        # 同一 symbol 内相邻行掩码, 跨 symbol 边界不允许 shift (避免错配)。
-        same_prev_symbol = np.zeros(n, dtype=bool)
-        same_prev_symbol[1:] = panel_symbols[1:] == panel_symbols[:-1]
-
-        entry_prices = open_prices if config.entry_fill == "open_t+1" else close_prices
-        exit_prices = open_prices if config.exit_fill == "open_t+1" else close_prices
-
-        if config.entry_fill == "open_t+1":
-            ent_s = np.zeros(n, dtype=bool)
-            ent_s[1:] = ent[:-1] & same_prev_symbol
-            ent = ent_s
-        if config.exit_fill == "open_t+1":
-            ext_s = np.zeros(n, dtype=bool)
-            ext_s[1:] = ext[:-1] & same_prev_symbol
-            ext = ext_s
-
-        # 逐 symbol 撮合
-        trades: list[TradeRecord] = []
-        unique_symbols = np.unique(panel_symbols)
-
-        for sym in unique_symbols:
-            mask = panel_symbols == sym
-            sym_ent = ent[mask]
-            sym_ext = ext[mask]
-            sym_entry_prices = entry_prices[mask]
-            sym_exit_prices = exit_prices[mask]
-            sym_close = close_prices[mask]
-            sym_dates = panel_dates[mask]
-
-            holding = False
-            entry_idx = -1
-            entry_price = 0.0
-            hold_days = 0
-
-            for i in range(len(sym_ent)):
-                if not holding:
-                    if sym_ent[i]:
-                        holding = True
-                        entry_idx = i
-                        entry_price = float(sym_entry_prices[i])
-                        hold_days = 0
-                else:
-                    hold_days += 1
-                    exit_triggered = False
-                    exit_reason = ""
-
-                    # 止损 — 用当日 close 检测 (优先级最高)
-                    if config.stop_loss_pct is not None:
-                        pnl = (float(sym_close[i]) - entry_price) / entry_price
-                        if pnl <= -abs(config.stop_loss_pct):
-                            exit_triggered = True
-                            exit_reason = "stop_loss"
-
-                    # 信号退出 (优先于 max_hold: 卖点信号是策略主动离场)
-                    if not exit_triggered and sym_ext[i]:
-                        exit_triggered = True
-                        exit_reason = "signal"
-
-                    # 最大持仓天数 (兜底: 无信号/未止损时强制平仓)
-                    if not exit_triggered and config.max_hold_days is not None:
-                        if hold_days >= config.max_hold_days:
-                            exit_triggered = True
-                            exit_reason = "max_hold"
-
-                    if exit_triggered:
-                        exit_price = float(sym_exit_prices[i])
-                        pnl_pct = (exit_price - entry_price) / entry_price if entry_price > 0 else 0.0
-                        fee_cost = config.fees_pct * 2 + config.slippage_bps / 10000.0 * 2
-                        pnl_pct -= fee_cost
-
-                        e_date = sym_dates[entry_idx]
-                        x_date = sym_dates[i]
-                        trades.append(TradeRecord(
-                            symbol=str(sym),
-                            entry_date=e_date.item() if hasattr(e_date, "item") else e_date,
-                            exit_date=x_date.item() if hasattr(x_date, "item") else x_date,
-                            entry_price=round(entry_price, 4),
-                            exit_price=round(exit_price, 4),
-                            pnl_pct=round(pnl_pct, 6),
-                            duration=int(hold_days),
-                            exit_reason=exit_reason,
-                        ))
-                        holding = False
-
-        # 净值曲线: 按出场日期归集收益
-        all_dates_sorted = np.sort(np.unique(panel_dates))
-        equity_curve, drawdown_curve = self._build_curves(trades, all_dates_sorted, config.initial_capital)
-
-        # 统计
-        date_min = panel_dates.min()
-        date_max = panel_dates.max()
-        d_min = date_min.item() if hasattr(date_min, "item") else date_min
-        d_max = date_max.item() if hasattr(date_max, "item") else date_max
-        stats = self._calc_stats(trades, config.initial_capital, d_min, d_max)
-        per_symbol = self._calc_per_symbol(trades)
-
-        return SimResult(
-            equity_curve=equity_curve,
-            drawdown_curve=drawdown_curve,
-            trades=trades,
-            per_symbol_stats=per_symbol,
-            stats=stats,
-        )
-
     def simulate_independent_candidates(
         self,
         panel: pl.DataFrame,
@@ -445,14 +314,6 @@ class BacktestEngine:
         # 评分跟随建仓口径 shift (评分在买入日生效)。
         if config.entry_fill == "open_t+1":
             trade_scores[1:] = np.where(panel_symbols[1:] == panel_symbols[:-1], scores[:-1], trade_scores[1:])
-        limit_up_flags = (
-            panel["signal_limit_up"].fill_null(False).to_numpy().astype(bool)
-            if "signal_limit_up" in panel.columns else np.zeros(n, dtype=bool)
-        )
-        limit_down_flags = (
-            panel["signal_limit_down"].fill_null(False).to_numpy().astype(bool)
-            if "signal_limit_down" in panel.columns else np.zeros(n, dtype=bool)
-        )
 
         symbol_rows: dict[str, list[int]] = {}
         row_pos_in_symbol = np.zeros(n, dtype=int)
@@ -470,12 +331,10 @@ class BacktestEngine:
         execution_stats: dict[str, int] = {
             "buy_invalid_price": 0,
             "buy_suspended": 0,
-            "buy_limit_up": 0,
             "buy_score_filter": 0,
             "buy_no_next_bar": max(n_candidates - int(ent.sum()), 0),
             "sell_invalid_price": 0,
             "sell_suspended": 0,
-            "sell_limit_down": 0,
             "sell_no_future": 0,
             "pending_exit": 0,
         }
@@ -504,27 +363,11 @@ class BacktestEngine:
                     return True
             return False
 
-        def _is_one_price_limit(idx: int, direction: str) -> bool:
-            if _is_suspended(idx):
-                return False
-            o = float(open_prices[idx])
-            h = float(high_prices[idx])
-            l = float(low_prices[idx])
-            c = float(close_prices[idx])
-            if not all(_valid_price(x) for x in (o, h, l, c)):
-                return False
-            same_price = max(o, h, l, c) - min(o, h, l, c) <= max(abs(c) * 1e-4, 0.01)
-            if direction == "up":
-                return bool(limit_up_flags[idx]) and same_price
-            return bool(limit_down_flags[idx]) and same_price
-
         def _can_buy(idx: int) -> tuple[bool, str]:
             if _is_suspended(idx):
                 return False, "buy_suspended"
             if not _valid_price(entry_prices[idx]):
                 return False, "buy_invalid_price"
-            if _is_one_price_limit(idx, "up"):
-                return False, "buy_limit_up"
             return True, ""
 
         def _can_sell(idx: int, exit_price_override: float | None = None) -> tuple[bool, str]:
@@ -533,8 +376,6 @@ class BacktestEngine:
             exit_price = exit_price_override if exit_price_override is not None else exit_prices[idx]
             if not _valid_price(exit_price):
                 return False, "sell_invalid_price"
-            if _is_one_price_limit(idx, "down"):
-                return False, "sell_limit_down"
             return True, ""
 
         def _risk_exit(pos: dict, idx: int) -> tuple[str | None, float | None]:
@@ -594,7 +435,8 @@ class BacktestEngine:
                 return False
 
             exit_price = float(exit_price_override) if exit_price_override is not None else float(exit_prices[idx])
-            shares = 100.0
+            # 名义仓位: 每个候选按 1 手 (lot_size 股) 计, 只影响金额展示, 不影响 pnl_pct。
+            shares = float(config.lot_size) if config.lot_size > 0 else 1.0
             entry_value = shares * float(pos["entry_price"]) * (1 + buy_cost_pct)
             exit_value = shares * exit_price * (1 - sell_cost_pct)
             pnl_amount = exit_value - entry_value
@@ -716,7 +558,9 @@ class BacktestEngine:
                 elif not pos.get("pending_exit_reason"):
                     _try_close(pos, last_idx, "end", self._date_str(panel_dates[last_idx]))
 
-        return self._calc_independent_candidate_result(trades, n_candidates, execution_stats)
+        return self._calc_independent_candidate_result(
+            trades, n_candidates, execution_stats, config.periods_per_year,
+        )
 
     def simulate_portfolio(
         self,
@@ -791,14 +635,6 @@ class BacktestEngine:
         # 评分跟随建仓口径 shift (评分在买入日生效)。
         if config.entry_fill == "open_t+1":
             trade_scores[1:] = np.where(panel_symbols[1:] == panel_symbols[:-1], scores[:-1], trade_scores[1:])
-        limit_up_flags = (
-            panel["signal_limit_up"].fill_null(False).to_numpy().astype(bool)
-            if "signal_limit_up" in panel.columns else np.zeros(n, dtype=bool)
-        )
-        limit_down_flags = (
-            panel["signal_limit_down"].fill_null(False).to_numpy().astype(bool)
-            if "signal_limit_down" in panel.columns else np.zeros(n, dtype=bool)
-        )
 
         date_to_indices: dict[str, list[int]] = {}
         for i, d in enumerate(panel_dates):
@@ -824,7 +660,6 @@ class BacktestEngine:
         execution_stats: dict[str, int] = {
             "buy_invalid_price": 0,
             "buy_suspended": 0,
-            "buy_limit_up": 0,
             "buy_no_slot": 0,
             "buy_cash": 0,
             "buy_lot_size": 0,
@@ -833,7 +668,6 @@ class BacktestEngine:
             "buy_score_filter": 0,
             "sell_invalid_price": 0,
             "sell_suspended": 0,
-            "sell_limit_down": 0,
             "pending_exit": 0,
         }
 
@@ -868,27 +702,11 @@ class BacktestEngine:
                     return True
             return False
 
-        def _is_one_price_limit(idx: int, direction: str) -> bool:
-            if _is_suspended(idx):
-                return False
-            o = float(open_prices[idx])
-            h = float(high_prices[idx])
-            l = float(low_prices[idx])
-            c = float(close_prices[idx])
-            if not all(_valid_price(x) for x in (o, h, l, c)):
-                return False
-            same_price = max(o, h, l, c) - min(o, h, l, c) <= max(abs(c) * 1e-4, 0.01)
-            if direction == "up":
-                return bool(limit_up_flags[idx]) and same_price
-            return bool(limit_down_flags[idx]) and same_price
-
         def _can_buy(idx: int) -> tuple[bool, str]:
             if _is_suspended(idx):
                 return False, "buy_suspended"
             if not _valid_price(entry_prices[idx]):
                 return False, "buy_invalid_price"
-            if _is_one_price_limit(idx, "up"):
-                return False, "buy_limit_up"
             return True, ""
 
         def _can_sell(idx: int, exit_price_override: float | None = None) -> tuple[bool, str]:
@@ -897,8 +715,6 @@ class BacktestEngine:
             exit_price = exit_price_override if exit_price_override is not None else exit_prices[idx]
             if not _valid_price(exit_price):
                 return False, "sell_invalid_price"
-            if _is_one_price_limit(idx, "down"):
-                return False, "sell_limit_down"
             return True, ""
 
         def _mark_pending(sym: str, reason: str, signal_date: str) -> None:
@@ -1119,7 +935,12 @@ class BacktestEngine:
                     _count("buy_exposure")
                     continue
                 entry_price = float(entry_prices[idx])
-                shares = np.floor(allocation / (entry_price * (1 + buy_cost_pct)) / 100) * 100
+                # lot_size > 0: 按最小交易单位向下取整; <=0: 允许小数仓位 (加密货币)。
+                lot = float(config.lot_size)
+                if lot > 0:
+                    shares = float(np.floor(allocation / (entry_price * (1 + buy_cost_pct)) / lot) * lot)
+                else:
+                    shares = allocation / (entry_price * (1 + buy_cost_pct))
                 entry_value = shares * entry_price * (1 + buy_cost_pct)
                 if shares <= 0:
                     _count("buy_lot_size")
@@ -1139,7 +960,7 @@ class BacktestEngine:
                     "entry_price": entry_price,
                     "entry_value": entry_value,
                     "shares": shares,
-                    "lots": shares / 100,
+                    "lots": shares / lot if lot > 0 else shares,
                     "position_pct": entry_value / account_equity_before_buy if account_equity_before_buy > 0 else 0.0,
                     "entry_score": _score,
                     "max_high": entry_price,
@@ -1206,7 +1027,9 @@ class BacktestEngine:
             })
             drawdown_curve.append({"date": d_str[:10], "value": round(float(dd), 4)})
 
-        stats = self._calc_portfolio_stats(equity_curve, trades, config.initial_capital)
+        stats = self._calc_portfolio_stats(
+            equity_curve, trades, config.initial_capital, config.periods_per_year,
+        )
         stats["execution"] = execution_stats
         stats["pending_exit_positions"] = sum(1 for p in positions.values() if p.get("pending_exit_reason"))
         per_symbol = self._calc_per_symbol(trades)
@@ -1218,116 +1041,7 @@ class BacktestEngine:
             stats=stats,
         )
 
-    # ── 净值曲线 ──────────────────────────────────────
-
-    @staticmethod
-    def _build_curves(
-        trades: list[TradeRecord],
-        all_dates: np.ndarray,
-        initial_capital: float,
-    ) -> tuple[list[dict], list[dict]]:
-        """从交易记录构建日频净值曲线和回撤曲线。
-
-        资金模型: 每笔交易等权分配 (1/N_capital)，N_capital = 同时持仓数上限。
-        简化版: 按出场日归集所有已平仓交易的平均收益作为当日组合收益。
-        """
-        if not trades or len(all_dates) == 0:
-            return [], []
-
-        # 按出场日归集 pnl
-        exit_pnl: dict[str, list[float]] = {}
-        for t in trades:
-            d_str = str(t.exit_date)
-            exit_pnl.setdefault(d_str, []).append(t.pnl_pct)
-
-        equity = initial_capital
-        peak = initial_capital
-        curve: list[dict] = []
-        dd_curve: list[dict] = []
-
-        for d in all_dates:
-            d_str = str(d.item() if hasattr(d, "item") else d)
-            pnls = exit_pnl.get(d_str, [])
-            # 当日组合收益 = 该日所有出场交易的平均收益
-            daily_ret = float(np.mean(pnls)) if pnls else 0.0
-            equity *= (1 + daily_ret)
-            peak = max(peak, equity)
-            dd = (equity - peak) / peak if peak > 0 else 0.0
-            curve.append({"date": d_str[:10], "value": round(equity, 2)})
-            dd_curve.append({"date": d_str[:10], "value": round(dd, 4)})
-
-        return curve, dd_curve
-
     # ── 统计计算 ──────────────────────────────────────
-
-    @staticmethod
-    def _calc_stats(
-        trades: list[TradeRecord],
-        initial_capital: float,
-        start: date,
-        end: date,
-    ) -> dict:
-        if not trades:
-            return {"total_return": 0, "n_trades": 0}
-
-        pnls = np.array([t.pnl_pct for t in trades])
-        n_trades = len(trades)
-
-        # 从净值曲线推算总收益 (等权组合)
-        cumulative = 1.0
-        for p in pnls:
-            cumulative *= (1 + p)
-        # 修正: 等权组合的总收益不等于各笔复乘，用曲线终点更准
-        # 但这里作为简化，用各笔复乘作为近似
-        total_return = cumulative - 1.0
-
-        # 年化
-        n_days = max((end - start).days, 1)
-        years = n_days / 365.25
-        if total_return > -1.0 and years > 0:
-            annual_return = (1 + total_return) ** (1 / years) - 1
-        else:
-            annual_return = total_return
-
-        # 胜率
-        wins = pnls[pnls > 0]
-        losses = pnls[pnls <= 0]
-        win_rate = len(wins) / n_trades
-
-        # 盈亏比
-        avg_win = float(np.mean(wins)) if len(wins) > 0 else 0.0
-        avg_loss = abs(float(np.mean(losses))) if len(losses) > 0 else 0.0
-        profit_factor = avg_win / avg_loss if avg_loss > 0 else (float("inf") if avg_win > 0 else 0.0)
-
-        # 最大回撤 — 用交易序列近似
-        equity = initial_capital
-        peak = initial_capital
-        max_dd = 0.0
-        for p in pnls:
-            equity *= (1 + p)
-            peak = max(peak, equity)
-            dd = (equity - peak) / peak
-            max_dd = min(max_dd, dd)
-
-        # 夏普 — 用交易收益标准差近似
-        sharpe = float(np.mean(pnls) / np.std(pnls)) * np.sqrt(252) if np.std(pnls) > 0 else 0.0
-
-        # Calmar
-        calmar = annual_return / abs(max_dd) if abs(max_dd) > 0.001 else 0.0
-
-        return {
-            "total_return": round(float(total_return), 4),
-            "annual_return": round(float(annual_return), 4),
-            "max_drawdown": round(float(max_dd), 4),
-            "sharpe": round(float(sharpe), 2),
-            "calmar": round(float(calmar), 2),
-            "win_rate": round(float(win_rate), 4),
-            "profit_factor": round(float(profit_factor), 2) if np.isfinite(profit_factor) else None,
-            "n_trades": n_trades,
-            "avg_pnl": round(float(np.mean(pnls)), 4),
-            "avg_win": round(avg_win, 4),
-            "avg_loss": round(avg_loss, 4),
-        }
 
     @staticmethod
     def _calc_per_symbol(trades: list[TradeRecord]) -> list[dict]:
@@ -1365,6 +1079,7 @@ class BacktestEngine:
         trades: list[TradeRecord],
         n_candidates: int,
         execution_stats: dict[str, int],
+        periods_per_year: int = 252,
     ) -> SimResult:
         """全量独立候选统计：按每个候选样本的实际执行收益聚合。"""
         if not trades:
@@ -1420,7 +1135,10 @@ class BacktestEngine:
         drawdowns = values / peaks - 1 if len(values) else np.array([])
         max_drawdown = float(drawdowns.min()) if len(drawdowns) else 0.0
         daily = np.array(daily_avg, dtype=float)
-        sharpe = float(np.mean(daily) / np.std(daily) * np.sqrt(252)) if len(daily) > 1 and np.std(daily) > 0 else 0.0
+        sharpe = (
+            float(np.mean(daily) / np.std(daily) * np.sqrt(periods_per_year))
+            if len(daily) > 1 and np.std(daily) > 0 else 0.0
+        )
 
         lo, hi, nbins = -0.20, 0.20, 20
         clipped = np.clip(pnls, lo, hi)
@@ -1468,6 +1186,7 @@ class BacktestEngine:
         equity_curve: list[dict],
         trades: list[TradeRecord],
         initial_capital: float,
+        periods_per_year: int = 252,
     ) -> dict:
         if not equity_curve:
             return {"total_return": 0, "n_trades": 0}
@@ -1475,11 +1194,17 @@ class BacktestEngine:
         total_return = final_equity / initial_capital - 1 if initial_capital > 0 else 0.0
         values = np.array([float(r["value"]) for r in equity_curve], dtype=float)
         daily = values[1:] / values[:-1] - 1 if len(values) > 1 else np.array([])
-        annual_return = (1 + total_return) ** (252 / max(len(equity_curve), 1)) - 1 if total_return > -1 else total_return
+        annual_return = (
+            (1 + total_return) ** (periods_per_year / max(len(equity_curve), 1)) - 1
+            if total_return > -1 else total_return
+        )
         peaks = np.maximum.accumulate(values)
         drawdowns = values / peaks - 1
         max_drawdown = float(drawdowns.min()) if len(drawdowns) else 0.0
-        sharpe = float(np.mean(daily) / np.std(daily) * np.sqrt(252)) if len(daily) and np.std(daily) > 0 else 0.0
+        sharpe = (
+            float(np.mean(daily) / np.std(daily) * np.sqrt(periods_per_year))
+            if len(daily) and np.std(daily) > 0 else 0.0
+        )
         pnls = np.array([t.pnl_pct for t in trades], dtype=float) if trades else np.array([])
         exposures = np.array([float(r.get("exposure", 0.0)) for r in equity_curve], dtype=float)
         wins = pnls[pnls > 0]

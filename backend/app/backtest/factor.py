@@ -50,8 +50,10 @@ class FactorConfig:
     n_groups: int = 5
     rebalance: Literal["daily", "weekly", "monthly"] = "monthly"
     weight: Literal["equal", "factor_weight"] = "equal"
-    fees_pct: float = 0.0002
+    fees_pct: float = 0.0  # 美股零佣金默认; 加密请求在 API 层默认 0.001
     slippage_bps: float = 5.0
+    # 年化周期数 (美股 252 / 加密 365)。
+    periods_per_year: int = 252
 
 
 @dataclass
@@ -170,7 +172,7 @@ class FactorBacktestService:
         # ── 2. 分层回测 ──
         panel = self._add_groups(panel, factor_col, config.n_groups)
         group_nav = self._calc_group_nav(panel, config)
-        group_stats = self._calc_group_stats(group_nav, config.start, config.end)
+        group_stats = self._calc_group_stats(group_nav, config.start, config.end, config.periods_per_year)
 
         # ── 3. 多空组合 ──
         long_short_nav, long_short_stats = self._calc_long_short(group_nav, config)
@@ -241,14 +243,15 @@ class FactorBacktestService:
         date_set = set(all_dates)
 
         if rebalance == "weekly":
-            # 调仓日 = 每周一
+            # 调仓日 = 每 ISO 周首个交易日 (美股周一假期/加密周末数据均兼容)
+            seen_weeks: set[tuple[int, int]] = set()
             rebalance_dates = set()
             for d in all_dates:
-                if hasattr(d, "weekday"):
-                    wd = d.weekday()
-                else:
-                    wd = _dt.date.fromisoformat(str(d)).weekday()
-                if wd == 0:  # Monday
+                d_val = d if isinstance(d, _dt.date) else _dt.date.fromisoformat(str(d))
+                iso = d_val.isocalendar()
+                week_key = (iso[0], iso[1])  # (ISO 年, ISO 周)
+                if week_key not in seen_weeks:
+                    seen_weeks.add(week_key)
                     rebalance_dates.add(d)
         else:  # monthly
             # 调仓日 = 每月首个交易日
@@ -357,7 +360,7 @@ class FactorBacktestService:
 
     @staticmethod
     def _calc_group_stats(
-        group_nav: list[dict], start: date, end: date,
+        group_nav: list[dict], start: date, end: date, periods_per_year: int = 252,
     ) -> list[dict]:
         if not group_nav:
             return []
@@ -391,7 +394,7 @@ class FactorBacktestService:
             # 夏普
             if daily_rets:
                 arr = np.array(daily_rets)
-                sharpe = float(np.mean(arr) / np.std(arr)) * np.sqrt(252) if np.std(arr) > 0 else 0.0
+                sharpe = float(np.mean(arr) / np.std(arr)) * np.sqrt(periods_per_year) if np.std(arr) > 0 else 0.0
                 win_rate = float(np.mean(arr > 0))
             else:
                 sharpe = 0.0
@@ -477,4 +480,5 @@ class FactorBacktestService:
             "weight": c.weight,
             "fees_pct": c.fees_pct,
             "slippage_bps": c.slippage_bps,
+            "periods_per_year": c.periods_per_year,
         }

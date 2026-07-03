@@ -62,7 +62,7 @@ export function ActiveJobCard({ job }: { job: PipelineJob }) {
   const statusMap = {
     running:   { icon: Loader2,     color: 'text-accent',   label: '运行中', spinning: true,  border: 'border-accent/40', bg: 'bg-accent/5' },
     pending:   { icon: Loader2,     color: 'text-muted',    label: '排队中', spinning: true,  border: 'border-border',    bg: 'bg-surface' },
-    succeeded: { icon: CheckCircle2, color: 'text-bear',     label: '完成',   spinning: false, border: 'border-bear/30',   bg: 'bg-bear/5' },
+    succeeded: { icon: CheckCircle2, color: 'text-success',  label: '完成',   spinning: false, border: 'border-success/30',   bg: 'bg-success/5' },
     failed:    { icon: XCircle,     color: 'text-danger',   label: '失败',   spinning: false, border: 'border-danger/40', bg: 'bg-danger/5' },
   } as const
   const meta = statusMap[job.status]

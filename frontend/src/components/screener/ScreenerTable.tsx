@@ -11,7 +11,7 @@ import type { KlineRow } from '@/lib/api'
 import { fmtPrice } from '@/lib/format'
 import type { ColumnConfig } from '@/lib/screener-columns'
 import { getSignals, signalCls } from '@/lib/stock-table'
-import { boardTag, renderBuiltinDataCell } from '@/components/stock-table/primitives'
+import { renderBuiltinDataCell } from '@/components/stock-table/primitives'
 import { resolveCandleConfig } from '@/lib/list-columns'
 import { MiniCandlestick } from '@/components/stock-table/MiniCandlestick'
 import { StockDataTable, type SortState } from '@/components/stock-table/StockDataTable'
@@ -97,7 +97,7 @@ function renderExtValue(
     return <span className="tabular-nums">{displayVal}</span>
   }
   if (typeof val === 'boolean') {
-    return <span className={val ? 'text-bull' : 'text-muted'}>{val ? '是' : '否'}</span>
+    return <span className={val ? 'text-success' : 'text-muted'}>{val ? '是' : '否'}</span>
   }
 
   const cfg = col.extDisplay
@@ -163,7 +163,6 @@ export function ScreenerTable({
     // 策略页特有 / 需上下文的列
     switch (key) {
       case 'symbol': {
-        const board = boardTag(r.symbol)
         const inWatchlist = watchlistSet.has(r.symbol)
         return (
           <td key={col.id} className="px-4 py-2">
@@ -173,13 +172,6 @@ export function ScreenerTable({
                 onClick={() => onPreview(r.symbol, r.name ?? '')}
                 className={`flex items-center gap-2 text-left ${isExpired ? 'cursor-default' : ''}`}
               >
-                {board ? (
-                  <span className={`shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded text-[9px] font-bold leading-none border ${board.color}`}>
-                    {board.label}
-                  </span>
-                ) : (
-                  <span className="shrink-0 w-[18px]" />
-                )}
                 <span className="font-mono text-secondary group-hover:text-accent transition-colors duration-150 leading-snug">
                   {r.symbol}
                 </span>

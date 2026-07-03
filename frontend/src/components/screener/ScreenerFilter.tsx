@@ -9,11 +9,11 @@ export interface ScreenerFilter {
   changePctMax: string
   momentum5dMin: string
   momentum5dMax: string
-  amountMin: string      // 成交额最小(亿)
-  marketCapMin: string   // 市值最小(亿)
-  marketCapMax: string   // 市值最大(亿)
-  floatCapMin: string    // 流通市值最小(亿)
-  floatCapMax: string    // 流通市值最大(亿)
+  amountMin: string      // 成交额最小(百万$)
+  marketCapMin: string   // 市值最小(百万$)
+  marketCapMax: string   // 市值最大(百万$)
+  floatCapMin: string    // 流通市值最小(百万$)
+  floatCapMax: string    // 流通市值最大(百万$)
   volRatioMin: string    // 量比最小
   rsiMin: string
   rsiMax: string
@@ -64,15 +64,15 @@ export function applyFilter(rows: any[], f: ScreenerFilter): any[] {
     const m5 = (r.momentum_5d ?? 0) * 100
     if (v(f.momentum5dMin) != null && m5 < v(f.momentum5dMin)!) return false
     if (v(f.momentum5dMax) != null && m5 > v(f.momentum5dMax)!) return false
-    // 成交额(亿)
-    const amount = (r.amount ?? 0) / 1e8
+    // 成交额(百万$)
+    const amount = (r.amount ?? 0) / 1e6
     if (v(f.amountMin) != null && amount < v(f.amountMin)!) return false
-    // 市值(亿)
-    const cap = close * (r.total_shares ?? 0) / 1e8
+    // 市值(百万$)
+    const cap = close * (r.total_shares ?? 0) / 1e6
     if (v(f.marketCapMin) != null && cap < v(f.marketCapMin)!) return false
     if (v(f.marketCapMax) != null && cap > v(f.marketCapMax)!) return false
-    // 流通市值(亿)
-    const fcap = close * (r.float_shares ?? 0) / 1e8
+    // 流通市值(百万$)
+    const fcap = close * (r.float_shares ?? 0) / 1e6
     if (v(f.floatCapMin) != null && fcap < v(f.floatCapMin)!) return false
     if (v(f.floatCapMax) != null && fcap > v(f.floatCapMax)!) return false
     // 量比
@@ -96,12 +96,12 @@ export function FilterPanel({ value, onChange, onClose, onReset }: {
   const set = (key: keyof ScreenerFilter, v: string) => onChange({ ...value, [key]: v })
 
   const fields: { label: string; min: keyof ScreenerFilter; max: keyof ScreenerFilter; unit: string; step?: string }[] = [
-    { label: '现价',      min: 'priceMin',      max: 'priceMax',      unit: '元', step: '0.1' },
+    { label: '现价',      min: 'priceMin',      max: 'priceMax',      unit: '$', step: '0.1' },
     { label: '涨跌幅',    min: 'changePctMin',   max: 'changePctMax',  unit: '%' },
     { label: '5日涨幅',   min: 'momentum5dMin',  max: 'momentum5dMax', unit: '%' },
-    { label: '成交额',    min: 'amountMin',      max: 'amountMin',     unit: '亿', step: '0.5' },
-    { label: '总市值',    min: 'marketCapMin',   max: 'marketCapMax',  unit: '亿', step: '10' },
-    { label: '流通市值',  min: 'floatCapMin',    max: 'floatCapMax',   unit: '亿', step: '10' },
+    { label: '成交额',    min: 'amountMin',      max: 'amountMin',     unit: 'M$', step: '0.5' },
+    { label: '总市值',    min: 'marketCapMin',   max: 'marketCapMax',  unit: 'M$', step: '10' },
+    { label: '流通市值',  min: 'floatCapMin',    max: 'floatCapMax',   unit: 'M$', step: '10' },
     { label: '量比',      min: 'volRatioMin',    max: 'volRatioMin',   unit: '', step: '0.1' },
     { label: 'RSI14',     min: 'rsiMin',         max: 'rsiMax',        unit: '', step: '1' },
   ]

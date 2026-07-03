@@ -43,7 +43,7 @@ class PriceLevel:
 LEVEL_TYPES = {
     "sr": "压力支撑",        # 成交密集区(价量:Volume Profile POC + 高成交密集区)
     "pivot": "枢轴点",        # 经典 Pivot P/R/S
-    "extreme": "前高前低",    # 60/250 日极值 + 近期 swing 高低点
+    "extreme": "前高前低",    # 60/252 日极值 + 近期 swing 高低点
     "boll": "布林带",         # MA20 ± 2σ,标准差波动带(参考性,非真实支撑压力)
     "keltner_s": "Keltner短期",  # MA20 ± 2×ATR
     "keltner_m": "Keltner中期",  # MA60 ± 2.5×ATR
@@ -53,6 +53,26 @@ LEVEL_TYPES = {
     "fib": "斐波那契",        # 回撤位 0.236~0.786
     "round": "整数关口",      # 心理整数位
 }
+
+
+def _round_price(v: float, ref: float | None = None) -> float:
+    """价格自适应精度取整 — 按参考价量级决定小数位。
+
+    美股/加密价格跨度极大 (BTC 6.8 万 vs 迷你币 0.00002), 固定 2 位小数
+    会让低价币的所有价位坍缩成 0.00。规则:
+      - 参考价 ≥ 1000: 1 位小数 (如 BTC 68123.5)
+      - 参考价 ≥ 1:    2 位小数 (常规美股)
+      - 参考价 ≥ 0.01: 4 位小数
+      - 参考价 < 0.01: 6 位小数 (迷你币, 保留有效数字)
+    """
+    r = abs(ref) if ref else abs(v)
+    if r >= 1000:
+        return round(v, 1)
+    if r >= 1:
+        return round(v, 2)
+    if r >= 0.01:
+        return round(v, 4)
+    return round(v, 6)
 
 
 # ================================================================
@@ -115,7 +135,7 @@ def _support_resistance(df: pl.DataFrame, bins: int = 40) -> list[dict]:
     # POC:成交量最大的桶
     poc_pos = max(range(len(vols)), key=lambda i: vols[i])
     poc_mid = bin_mid(bin_ids[poc_pos])
-    out.append({"value": round(poc_mid, 2), "label": "成交密集区(POC)",
+    out.append({"value": _round_price(poc_mid, close), "label": "成交密集区(POC)",
                 "type": "sr", "side": _side(poc_mid, close), "strength": "strong"})
 
     # 其他高成交区(高于均值,排除 POC),按成交量降序取 2 个
@@ -123,7 +143,7 @@ def _support_resistance(df: pl.DataFrame, bins: int = 40) -> list[dict]:
     candidates.sort(key=lambda x: x[1], reverse=True)
     for i, _v in candidates[:2]:
         mid = bin_mid(bin_ids[i])
-        out.append({"value": round(mid, 2), "label": "成交密集区",
+        out.append({"value": _round_price(mid, close), "label": "成交密集区",
                     "type": "sr", "side": _side(mid, close), "strength": "medium"})
     return out
 
@@ -161,7 +181,7 @@ def _pivot_points(df: pl.DataFrame) -> list[dict]:
         #   1 = R1/S1(第一档压力/支撑)
         #   2 = R2/S2(第二档)
         #   3 = R3/S3(第三档,极端,实际很少触及)
-        return {"value": round(v, 2), "label": label, "type": "pivot",
+        return {"value": _round_price(v, c), "label": label, "type": "pivot",
                 "side": side, "strength": strength, "rank": rank}
 
     return [
@@ -184,7 +204,7 @@ def _extreme_levels(df: pl.DataFrame) -> list[dict]:
 
     设计:把所有"前高前低"类点位集中在本组,与 sr(通道)区分:
       - 60 日极值:近一季度高低点(短期参照)
-      - 250 日极值:年度高低点(牛熊分界参照);跳过 120 日(被 250 日包含,信息冗余)
+      - 252 日极值:年度高低点(美股一年 ≈ 252 个交易日);跳过 120 日(被 252 日包含,信息冗余)
       - swing 高低点:近期局部转折点,每侧只取距当前价最近的 2 个
     """
     if df.is_empty():
@@ -192,18 +212,18 @@ def _extreme_levels(df: pl.DataFrame) -> list[dict]:
     close = float(df.tail(1)["close"][0]) if "close" in df.columns else None
     out: list[dict] = []
 
-    # —— 历史极值(只取 60 / 250,避免中间档冗余)——
-    for n in (60, 250):
+    # —— 历史极值(只取 60 / 252,避免中间档冗余)——
+    for n in (60, 252):
         if df.height < n:
             continue
         sub = df.tail(n)
         hi = float(sub["high"].max())
         lo = float(sub["low"].min())
         if _ok(hi):
-            out.append({"value": round(hi, 2), "label": f"{n}日新高",
+            out.append({"value": _round_price(hi, close), "label": f"{n}日新高",
                         "type": "extreme", "side": "resistance", "strength": "strong"})
         if _ok(lo):
-            out.append({"value": round(lo, 2), "label": f"{n}日新低",
+            out.append({"value": _round_price(lo, close), "label": f"{n}日新低",
                         "type": "extreme", "side": "support", "strength": "strong"})
 
     # —— 近期 swing 高低点(每侧只取距当前价最近的 2 个,避免点位爆炸)——
@@ -224,14 +244,14 @@ def _extreme_levels(df: pl.DataFrame) -> list[dict]:
         agg_h = [v for v in agg_h if v > close * 1.001]
         agg_h.sort(key=lambda v: abs(v - close))
         for v in agg_h[:2]:
-            out.append({"value": round(v, 2), "label": "前高",
+            out.append({"value": _round_price(v, close), "label": "前高",
                         "type": "extreme", "side": "resistance", "strength": "medium"})
 
         agg_l = _aggregate_levels(swing_lows, 0.01)
         agg_l = [v for v in agg_l if v < close * 0.999]
         agg_l.sort(key=lambda v: abs(v - close))
         for v in agg_l[:2]:
-            out.append({"value": round(v, 2), "label": "前低",
+            out.append({"value": _round_price(v, close), "label": "前低",
                         "type": "extreme", "side": "support", "strength": "medium"})
 
     return out
@@ -276,9 +296,9 @@ def _keltner_band(
     upper = ma_val + n * atr
     lower = ma_val - n * atr
     return [
-        {"value": round(upper, 2), "label": f"{label_short}通道上轨",
+        {"value": _round_price(upper, close), "label": f"{label_short}通道上轨",
          "type": type_key, "side": _side(upper, close), "strength": "medium"},
-        {"value": round(lower, 2), "label": f"{label_short}通道下轨",
+        {"value": _round_price(lower, close), "label": f"{label_short}通道下轨",
          "type": type_key, "side": _side(lower, close), "strength": "medium"},
     ]
 
@@ -301,9 +321,9 @@ def _boll_channel(df: pl.DataFrame) -> list[dict]:
         return []
     bu, bl = float(bu), float(bl)
     out = [
-        {"value": round(bu, 2), "label": "布林上轨",
+        {"value": _round_price(bu, close), "label": "布林上轨",
          "type": "boll", "side": _side(bu, close), "strength": "medium"},
-        {"value": round(bl, 2), "label": "布林下轨",
+        {"value": _round_price(bl, close), "label": "布林下轨",
          "type": "boll", "side": _side(bl, close), "strength": "medium"},
     ]
     # 布林中轨 = MA20(多空平衡线,价格在其上下分强弱);数据层已预计算 ma20
@@ -311,7 +331,7 @@ def _boll_channel(df: pl.DataFrame) -> list[dict]:
         mid = last["ma20"][0]
         if _ok(mid):
             mid = float(mid)
-            out.append({"value": round(mid, 2), "label": "布林中轨",
+            out.append({"value": _round_price(mid, close), "label": "布林中轨",
                         "type": "boll", "side": _side(mid, close), "strength": "medium"})
     return out
 
@@ -352,7 +372,7 @@ def _atr_stops(df: pl.DataFrame) -> list[dict]:
         return []
 
     def lv(v: float, label: str, side: str, strength: str) -> dict:
-        return {"value": round(v, 2), "label": label, "type": "atr_stop",
+        return {"value": _round_price(v, close), "label": label, "type": "atr_stop",
                 "side": side, "strength": strength}
 
     return [
@@ -408,10 +428,10 @@ def _gap_levels(df: pl.DataFrame, lookback: int = 120) -> list[dict]:
 
     out: list[dict] = []
     for mid in _filter_unfilled(up_gaps, True):
-        out.append({"value": round(mid, 2), "label": "向上缺口",
+        out.append({"value": _round_price(mid, close), "label": "向上缺口",
                     "type": "gap", "side": _side(mid, close), "strength": "medium"})
     for mid in _filter_unfilled(dn_gaps, False):
-        out.append({"value": round(mid, 2), "label": "向下缺口",
+        out.append({"value": _round_price(mid, close), "label": "向下缺口",
                     "type": "gap", "side": _side(mid, close), "strength": "medium"})
     return out
 
@@ -453,7 +473,7 @@ def _fibonacci_levels(df: pl.DataFrame, window: int = 120) -> list[dict]:
             val = hi_val - rng * r          # 从高点向下回撤
         else:
             val = lo_val + rng * r          # 从低点向上回撤
-        out.append({"value": round(val, 2), "label": f"Fib {int(r * 1000) / 10:.1f}%",
+        out.append({"value": _round_price(val, close), "label": f"Fib {int(r * 1000) / 10:.1f}%",
                     "type": "fib", "side": _side(val, close), "strength": "medium"})
     return out
 
@@ -465,13 +485,9 @@ def _fibonacci_levels(df: pl.DataFrame, window: int = 120) -> list[dict]:
 def _round_numbers(df: pl.DataFrame, pct: float = 0.10, max_count: int = 8) -> list[dict]:
     """当前价附近的心理整数关口。
 
-    整数位(如 10/11/12元,或 60/65/70元)是天然的心理支撑/阻力,
-    低价股尤其明显。按价格量级自适应步长:
-      - 价格 < 10:   步长 0.5  (如 6.5, 7.0, 7.5)
-      - 价格 < 20:   步长 1    (如 11, 12, 13)
-      - 价格 < 100:  步长 5    (如 60, 65, 70)
-      - 价格 < 500:  步长 10   (如 110, 120, 130)
-      - 价格 >= 500: 步长 50   (如 1100, 1150, 1200)
+    整数位是天然的心理支撑/阻力。美股/加密价格量级跨度极大 (0.00002 ~ 68000),
+    步长按对数尺度自适应: step = 10^floor(log10(close)) * {0.1, 0.25, 0.5, 1},
+    从小到大选第一个能让候选数量适中的档位。
     过滤掉距当前价 <1% 的(太近,无分析价值),最多 max_count 个。
     """
     if df.is_empty():
@@ -480,26 +496,25 @@ def _round_numbers(df: pl.DataFrame, pct: float = 0.10, max_count: int = 8) -> l
     if not _ok(close):
         return []
 
-    if close < 10:
-        step = 0.5
-    elif close < 20:
-        step = 1.0
-    elif close < 100:
-        step = 5.0
-    elif close < 500:
-        step = 10.0
-    else:
-        step = 50.0
+    import math
+    magnitude = 10.0 ** math.floor(math.log10(close))
+    span = 2 * close * pct
+    step = magnitude
+    for mult in (0.1, 0.25, 0.5, 1.0):
+        s = magnitude * mult
+        if span / s <= max_count * 2:  # 候选数量适中即停
+            step = s
+            break
 
     lo = close * (1 - pct)
     hi = close * (1 + pct)
     # 找区间 [lo, hi] 内所有 step 的整数倍(严格限定在区间内)
-    start = (int(lo / step) + (1 if lo % step > 0 else 0)) * step
+    start = math.ceil(lo / step) * step
     candidates: list[float] = []
     v = start
     while v <= hi:
         if v > 0:
-            candidates.append(round(v, 2))
+            candidates.append(_round_price(v, close))
         v += step
 
     # 按距当前价从近到远排序,取前 max_count 个
@@ -509,7 +524,7 @@ def _round_numbers(df: pl.DataFrame, pct: float = 0.10, max_count: int = 8) -> l
         # 过滤距当前价 <1% 的(太近,无分析价值)
         if abs(v - close) / close < 0.01:
             continue
-        out.append({"value": round(v, 2), "label": f"整数关口 {v:g}",
+        out.append({"value": _round_price(v, close), "label": f"整数关口 {v:g}",
                     "type": "round", "side": _side(v, close), "strength": "weak"})
     return out
 
@@ -547,8 +562,8 @@ def summarize_levels(levels: dict[str, list[dict]], close: float | None) -> str:
     if not close:
         return "无价位数据"
     parts: list[str] = []
-    # 当前价
-    parts.append(f"当前价 {close:.2f}")
+    # 当前价 (自适应精度, 低价币不坍缩成 0.00)
+    parts.append(f"当前价 {_round_price(close, close):g}")
     # 每组取前 2 个最相关的(距当前价近的优先)
     for key, label in LEVEL_TYPES.items():
         pts = levels.get(key, [])

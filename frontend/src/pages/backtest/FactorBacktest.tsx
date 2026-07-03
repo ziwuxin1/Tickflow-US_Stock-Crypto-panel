@@ -87,7 +87,7 @@ export function FactorBacktest() {
   const [end, setEnd] = useState(TODAY)
   const [nGroups, setNGroups] = useState(5)
   const [weight, setWeight] = useState<'equal' | 'factor_weight'>('equal')
-  const [fees, setFees] = useState('2')
+  const [fees, setFees] = useState('')
   const [result, setResult] = useState<FactorBacktestResult | null>(null)
 
   const columns = useQuery({
@@ -120,7 +120,7 @@ export function FactorBacktest() {
         n_groups: nGroups,
         rebalance: 'daily',
         weight,
-        fees_pct: Number(fees) / 10000,
+        fees_pct: fees.trim() === '' ? undefined : Number(fees) / 10000,
       }),
     onSuccess: (data) => {
       if (data.error) {
@@ -267,7 +267,7 @@ export function FactorBacktest() {
           <div>
             <label className="text-xs font-medium text-secondary block mb-1.5">佣金(万分之)</label>
             <input type="number" value={fees} onChange={e => setFees(e.target.value)}
-              className={INPUT_CLS} />
+              placeholder="留空按市场默认" className={INPUT_CLS} />
           </div>
         </div>
 

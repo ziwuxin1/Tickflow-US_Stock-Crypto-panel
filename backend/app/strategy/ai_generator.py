@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # 策略开发文档路径
 GUIDE_PATH = Path(__file__).resolve().parent.parent.parent.parent / "docs" / "strategy-guide.md"
 
-_SYSTEM_PREFIX = """你是A股量化策略设计专家。根据用户描述的需求，参考下方的《策略开发指南》生成一个完整的策略Python文件。
+_SYSTEM_PREFIX = """你是美股与加密货币量化策略设计专家。根据用户描述的需求，参考下方的《策略开发指南》生成一个完整的策略Python文件。标的池同时包含美股(如 AAPL.US)与加密货币(如 BTCUSDT), 策略应对两类资产通用, 除非用户明确只针对某一类。
 
 核心约束:
 - 只创建这一个 .py 文件，不要修改任何现有文件，不要跨文件引用

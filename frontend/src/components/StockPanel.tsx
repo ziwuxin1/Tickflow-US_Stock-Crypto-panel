@@ -25,8 +25,6 @@ interface Props {
   markers?: ChartMarker[]
   ranges?: ChartRange[]
   priceLines?: ChartPriceLine[]
-  showLimitMarkers?: boolean
-  showMarkerToggle?: boolean
   /** 加监控回调 (传入后信息条显示 RadioTower 图标) */
   onMonitor?: () => void
   /** 加自选 (传入后信息条显示 Star 图标) */
@@ -46,8 +44,6 @@ export function StockPanel({
   markers,
   ranges,
   priceLines,
-  showLimitMarkers = true,
-  showMarkerToggle = true,
   onMonitor,
   inWatchlist,
   onToggleWatchlist,
@@ -141,8 +137,6 @@ export function StockPanel({
           markers={markers}
           ranges={ranges}
           priceLines={priceLines}
-          showLimitMarkers={showLimitMarkers}
-          showMarkerToggle={showMarkerToggle}
           linkedPrice={linkedPrice}
           onDateClick={handleDateClick}
           onDataChange={setDailyResult}

@@ -33,12 +33,8 @@ import {
   LayoutDashboard,
   Tags,
   TrendingUp,
-  Flame,
   BarChart3,
   Sparkles,
-  Layers3,
-  Landmark,
-  Cable,
   RadioTower,
   CheckCircle2,
   BookOpenCheck,
@@ -54,10 +50,10 @@ const BRAND = '#8B5CF6'
 const TICKFLOW_REGISTER_URL = 'https://tickflow.org/auth/register?ref=V3KDKGXPEA'
 
 const CORE_INDEXES = [
-  { symbol: '000001.SH', name: '上证指数' },
-  { symbol: '399001.SZ', name: '深证成指' },
-  { symbol: '399006.SZ', name: '创业板指' },
-  { symbol: '000680.SH', name: '科创综指' },
+  { symbol: 'SPY.US', name: '标普500ETF' },
+  { symbol: 'QQQ.US', name: '纳指100ETF' },
+  { symbol: 'BTCUSDT', name: '比特币' },
+  { symbol: 'ETHUSDT', name: '以太坊' },
 ] as const
 
 type CoreIndex = (typeof CORE_INDEXES)[number]
@@ -68,14 +64,10 @@ const nav = [
   { to: '/screener',   label: '策略',   icon: ScanSearch },
   { to: '/backtest',   label: '回测',   icon: History },
   { to: '/stock-analysis',    label: '个股分析', icon: TrendingUp },
-  { to: '/limit-ladder', label: '连板梯队', icon: Flame },
-  { to: '/concept-analysis', label: '概念分析', icon: Layers3 },
-  { to: '/industry-analysis', label: '行业分析', icon: Landmark },
   { to: '/financials', label: '财务分析', icon: FileText },
   { to: '/monitor', label: '监控中心', icon: RadioTower },
   { to: '/review',      label: '复盘',   icon: BookOpenCheck },
   { to: '/indices', label: '指数', icon: BarChart3 },
-  { to: '/trading', label: '交易', icon: Cable },
   { to: '/data',       label: '数据',   icon: Database },
 ] as const
 
@@ -242,7 +234,7 @@ function AIConfigBadge({ configured, model }: { configured?: boolean; model?: st
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-medium text-foreground">AI 配置</span>
-              <span className={`h-1.5 w-1.5 rounded-full ${configured ? 'bg-bear' : 'bg-warning'}`} />
+              <span className={`h-1.5 w-1.5 rounded-full ${configured ? 'bg-success' : 'bg-warning'}`} />
             </div>
             <div className="mt-0.5 truncate text-[10px] leading-tight text-muted">
               {configured ? (model || '已接入模型') : '接入策略生成模型'}
@@ -391,8 +383,8 @@ export function Layout() {
               className="font-mono font-bold text-[13px] tracking-[0.06em] text-foreground leading-tight"
               style={{ textShadow: `0 0 10px ${BRAND}44` }}
             >
-              <div>TickFlow</div>
-              <div>Stock Panel</div>
+              <div>Tickflow</div>
+              <div>US · Crypto</div>
             </div>
           </div>
 
@@ -444,7 +436,7 @@ export function Layout() {
                     <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-accent" />
                   )}
                   {to === '/data' && !isDataSyncing && dataSyncJustDone && (
-                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-bull animate-pulse" />
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success animate-pulse" />
                   )}
                   {/* 监控中心徽标: 仅非监控页且有未读时显示 */}
                   {to === '/monitor' && <MonitorBadge active={isActive} />}
@@ -522,7 +514,7 @@ export function Layout() {
               {isRunning && isTrading ? (
                 <span className="text-accent">行情运行中</span>
               ) : realtimeEnabled && !isTrading ? (
-                <span className="text-warning/70">非交易时段，将在交易时间自动开启</span>
+                <span className="text-warning/70">美股非交易时段（加密行情持续拉取）</span>
               ) : null}
             </div>
           )}

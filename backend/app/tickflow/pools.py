@@ -1,8 +1,8 @@
 """标的池(Universe)定义(§6.3)。
 
-Phase 1 实现:
-  - 常用指数成份(沪深 300 / 中证 500 / 上证 50)用 TickFlow `quote.pool` 端点拉取并缓存
-  - 全 A 通过 instruments.batch 获取
+当前实现:
+  - 美股全市场: TickFlow `US_Equity` universe(quotes.get_by_universes 拉取并缓存)
+  - 加密货币: Binance USDT 现货交易对(binance_provider.fetch_crypto_instruments, 按成交额取前 N)
   - 自选池 = 用户的 watchlist
 """
 from __future__ import annotations
@@ -19,16 +19,7 @@ from app.tickflow.client import get_client
 
 logger = logging.getLogger(__name__)
 
-PoolId = Literal["CSI300", "CSI500", "SSE50", "CN_Equity_A", "CN_Index", "watchlist"]
-
-# TickFlow universe id 是它内部命名(见 tf.universes.list())。
-# 没有官方对照表,启动时按名称模糊匹配从 universes.list() 里找。
-# 常见名:沪深300 / 中证500 / 上证50 / 全 A
-_POOL_NAME_HINTS = {
-    "CSI300": ["沪深300", "HS300", "CSI300"],
-    "CSI500": ["中证500", "ZZ500", "CSI500"],
-    "SSE50":  ["上证50",  "SH50", "SSE50"],
-}
+PoolId = Literal["US_Equity", "Crypto", "watchlist"]
 
 
 def _find_universe_id(hints: list[str]) -> str | None:
@@ -36,7 +27,7 @@ def _find_universe_id(hints: list[str]) -> str | None:
     try:
         tf = get_client()
         unis = tf.universes.list()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning("universes.list failed: %s", e)
         return None
     for u in unis or []:
@@ -70,64 +61,34 @@ def get_pool(pool_id: PoolId, refresh: bool = False) -> list[str]:
 
 
 def _fetch_pool(pool_id: PoolId) -> list[str]:
-    """从 TickFlow 拉取池成份。
+    """拉取池成份。
 
-    实现:先用 universes.list 找到 universe id,再 quotes.get_by_universes 拉成份。
+    US_Equity: 先用 universes.list 找到 universe id, 再 quotes.get_by_universes 拉成份。
+    Crypto: 从 Binance exchangeInfo 拉 USDT 现货交易对(按 24h 成交额取前 N)。
     """
-    tf = get_client()
-
-    if pool_id in _POOL_NAME_HINTS:
-        uid = _find_universe_id(_POOL_NAME_HINTS[pool_id])
+    if pool_id == "US_Equity":
+        tf = get_client()
+        # 全美股(含 ETF/CEF)— 优先直接用 US_Equity universe
+        uid = _find_universe_id(["US_Equity", "美股", "US Equity"])
         if not uid:
-            logger.warning("无法在 TickFlow universes 列表里匹配到 %s", pool_id)
+            logger.warning("无法在 TickFlow universes 列表里匹配到 US_Equity")
             return []
         try:
             df = tf.quotes.get_by_universes([uid], as_dataframe=True)
             if df is not None and len(df) > 0 and "symbol" in df.columns:
-                return df["symbol"].astype(str).tolist()
-        except Exception as e:  # noqa: BLE001
-            logger.warning("fetch pool %s via universe %s failed: %s", pool_id, uid, e)
-
-    if pool_id == "CN_Equity_A":
-        # 全 A — 优先直接用 CN_Equity_A universe (包含沪深京三市)
-        uid = _find_universe_id(["CN_Equity_A", "沪深京A股", "全A"])
-        if uid:
-            try:
-                df = tf.quotes.get_by_universes([uid], as_dataframe=True)
-                if df is not None and len(df) > 0 and "symbol" in df.columns:
-                    return sorted(set(df["symbol"].astype(str).tolist()))
-            except Exception as e:  # noqa: BLE001
-                logger.warning("fetch CN_Equity_A via universe %s failed: %s", uid, e)
-
-        # fallback: 聚合申万一级行业 (覆盖度较低, 缺北交所/新股)
-        try:
-            unis = tf.universes.list()
-        except Exception as e:  # noqa: BLE001
-            logger.warning("universes.list failed: %s", e)
-            unis = []
-        sw1_ids = []
-        for u in unis or []:
-            item = u if isinstance(u, dict) else {"id": getattr(u, "id", "")}
-            uid = item.get("id", "")
-            if "SW1_" in uid:
-                sw1_ids.append(uid)
-        if sw1_ids:
-            try:
-                df = tf.quotes.get_by_universes(sw1_ids, as_dataframe=True)
-                if df is not None and "symbol" in df.columns:
-                    return sorted(set(df["symbol"].astype(str).tolist()))
-            except Exception as e:  # noqa: BLE001
-                logger.warning("aggregate SW1 fetch failed: %s", e)
-
-    if pool_id == "CN_Index":
-        uid = _find_universe_id(["CN_Index", "沪深指数", "指数"])
-        ids = [uid] if uid else ["CN_Index"]
-        try:
-            df = tf.quotes.get_by_universes(ids, as_dataframe=True)
-            if df is not None and len(df) > 0 and "symbol" in df.columns:
                 return sorted(set(df["symbol"].astype(str).tolist()))
-        except Exception as e:  # noqa: BLE001
-            logger.warning("fetch CN_Index via universe %s failed: %s", ids, e)
+        except Exception as e:
+            logger.warning("fetch US_Equity via universe %s failed: %s", uid, e)
+        return []
+
+    if pool_id == "Crypto":
+        try:
+            from app.data_providers import binance_provider
+            inst = binance_provider.fetch_crypto_instruments()
+            if not inst.is_empty() and "symbol" in inst.columns:
+                return sorted(set(inst["symbol"].to_list()))
+        except Exception as e:
+            logger.warning("fetch Crypto pool via binance failed: %s", e)
 
     return []
 
@@ -145,14 +106,16 @@ def _load_watchlist() -> list[str]:
 
 # 兜底:Free 用户/无 API 时给一个小型可用集合,让 UI 不至于空白
 DEMO_SYMBOLS = [
-    "600000.SH",  # 浦发银行
-    "600036.SH",  # 招商银行
-    "600519.SH",  # 贵州茅台
-    "601318.SH",  # 中国平安
-    "601398.SH",  # 工商银行
-    "000001.SZ",  # 平安银行
-    "000333.SZ",  # 美的集团
-    "000651.SZ",  # 格力电器
-    "000858.SZ",  # 五粮液
-    "002594.SZ",  # 比亚迪
+    "AAPL.US",   # 苹果
+    "MSFT.US",   # 微软
+    "NVDA.US",   # 英伟达
+    "GOOGL.US",  # 谷歌A
+    "AMZN.US",   # 亚马逊
+    "META.US",   # Meta
+    "TSLA.US",   # 特斯拉
+    "AVGO.US",   # 博通
+    "JPM.US",    # 摩根大通
+    "SPY.US",    # 标普500ETF
+    "BTCUSDT",   # 比特币
+    "ETHUSDT",   # 以太坊
 ]

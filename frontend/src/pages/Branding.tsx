@@ -192,7 +192,7 @@ function Sample({ v }: { v: Variant }) {
 
         {/* 模拟一个数据卡片,看与配色协调度 */}
         <div className="mt-5 rounded-btn bg-surface border border-border px-3 py-2 flex items-baseline justify-between">
-          <span className="text-xs text-secondary">600519.SH</span>
+          <span className="text-xs text-secondary">AAPL.US</span>
           <span className="font-mono text-sm" style={{ color: v.glow }}>
             +1.85%
           </span>

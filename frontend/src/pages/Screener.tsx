@@ -727,7 +727,7 @@ export function Screener() {
                 <EmptyState
                   icon={ScanSearch}
                   title="今日无命中"
-                  hint="可能数据未跑盘后管道,或策略条件过于严苛。试试 POST /api/pipeline/run。"
+                  hint="可能数据未跑每日管道,或策略条件过于严苛。试试 POST /api/pipeline/run。"
                 />
               ) : (
                 <>
@@ -771,7 +771,7 @@ export function Screener() {
               </div>
               <div className="flex flex-col items-center gap-1.5">
                 <span className="text-sm text-secondary">可先在右上角切换日期，再点击策略卡片查看选股结果</span>
-                <span className="text-[11px] text-muted">若提示 enriched 表无数据，请先运行盘后管道</span>
+                <span className="text-[11px] text-muted">若提示 enriched 表无数据，请先运行每日管道</span>
               </div>
             </div>
           )}

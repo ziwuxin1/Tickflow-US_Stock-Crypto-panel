@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import logging
-import math
 import time
-from datetime import date
 
 import polars as pl
 from fastapi import APIRouter, Query, Request
@@ -93,8 +91,8 @@ _WATCHLIST_COLS = [
     "boll_upper", "boll_lower",
     "atr_14",
     "momentum_5d", "momentum_10d", "momentum_20d", "momentum_30d", "momentum_60d",
-    "consecutive_limit_ups", "consecutive_limit_downs",
-    "signal_limit_up", "signal_limit_down", "signal_volume_surge",
+    "consecutive_up_days",
+    "signal_volume_surge",
     "signal_ma_golden_5_20", "signal_macd_golden", "signal_n_day_high",
     "signal_boll_breakout_upper", "signal_ma20_breakout",
     "signal_ma_dead_5_20", "signal_macd_dead", "signal_n_day_low",

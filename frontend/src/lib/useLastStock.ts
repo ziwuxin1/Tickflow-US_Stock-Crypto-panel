@@ -9,7 +9,7 @@ import { useCallback, useState } from 'react'
  *
  * 用法:
  *   const { last, remember } = useLastStock('stock-analysis')
- *   remember('000001.SZ', '平安银行')   // 选中股票时调用
+ *   remember('AAPL.US', '苹果')   // 选中股票时调用
  *   <LastStockChip stock={last} ... />  // 渲染在 PageHeader 右侧
  */
 

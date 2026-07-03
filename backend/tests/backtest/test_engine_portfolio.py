@@ -24,8 +24,6 @@ def _panel(symbols: list[str], days: int = 4, price: float = 10.0, overrides: di
                 "close": patch.get("close", price),
                 "volume": patch.get("volume", 100_000),
                 "score": patch.get("score", {"A": 4, "B": 3, "C": 2, "D": 1}.get(sym, 0)),
-                "signal_limit_up": patch.get("signal_limit_up", False),
-                "signal_limit_down": patch.get("signal_limit_down", False),
             })
     return pl.DataFrame(rows).sort(["symbol", "date"])
 
@@ -68,34 +66,13 @@ def test_max_exposure_sets_target_position_and_caps_count():
     assert result.stats["max_exposure"] <= 0.61
 
 
-def test_one_price_limit_up_blocks_buy():
-    panel = _panel(
-        ["A"],
-        days=3,
-        overrides={
-            ("A", 1): {"open": 11, "high": 11, "low": 11, "close": 11, "signal_limit_up": True},
-        },
-    )
-    entries = _mask(panel, {("A", 0)})
-    exits = _mask(panel, set())
-
-    result = _engine().simulate_portfolio(
-        panel,
-        entries,
-        exits,
-        MatcherConfig(matching="open_t+1", fees_pct=0, slippage_bps=0, max_positions=1, initial_capital=100_000),
-    )
-
-    assert result.trades == []
-    assert result.stats["execution"]["buy_limit_up"] == 1
-
-
 def test_failed_open_exit_keeps_slot_and_blocks_replacement_buy():
+    """停牌 (volume=0 + 平价 bar) 卖出失败 → 挂起 pending-exit, 槽位保留, 不放行替补买入。"""
     panel = _panel(
         ["A", "B", "C", "D"],
         days=4,
         overrides={
-            ("A", 2): {"open": 9, "high": 9, "low": 9, "close": 9, "signal_limit_down": True},
+            ("A", 2): {"open": 9, "high": 9, "low": 9, "close": 9, "volume": 0},
         },
     )
     entries = _mask(panel, {
@@ -119,7 +96,7 @@ def test_failed_open_exit_keeps_slot_and_blocks_replacement_buy():
     )
 
     assert "D" not in {t.symbol for t in result.trades}
-    assert result.stats["execution"]["sell_limit_down"] == 1
+    assert result.stats["execution"]["sell_suspended"] == 1
     assert result.stats["execution"]["pending_exit"] == 1
     assert result.stats["execution"]["buy_no_slot"] >= 1
     a_trade = next(t for t in result.trades if t.symbol == "A")

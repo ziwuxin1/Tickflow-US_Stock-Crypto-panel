@@ -12,26 +12,24 @@ import time
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 import polars as pl
 
 logger = logging.getLogger(__name__)
 
-# 引擎级默认基础过滤 — 策略未定义 BASIC_FILTER 时兜底
+# 引擎级默认基础过滤 — 策略未定义 BASIC_FILTER 时兜底 (美元口径, 美股/加密混合池)
+# 注意: market_cap/turnover 等条件写成 null-tolerant (缺数据的加密行不被误杀)。
 DEFAULT_BASIC_FILTER: dict = {
-    "price_min": 3,
-    "price_max": 300,
-    "market_cap_min": 10e8,
+    "price_min": 1.0,           # 剔除 1 美元以下的仙股
+    "price_max": None,
+    "market_cap_min": 1e8,      # 总市值 ≥ 1 亿美元 (加密无 total_shares → 放行)
     "float_cap_min": None,
     "float_cap_max": None,
-    "amount_min": 0.2e8,
+    "amount_min": 5e6,          # 日成交额 ≥ 500 万美元 (流动性门槛)
     "amount_max": None,
     "turnover_min": None,
     "turnover_max": None,
-    "exclude_st": True,
-    "exclude_new_days": 30,
-    "boards": ["沪主板", "深主板", "创业板", "科创板", "北交所"],
 }
 
 
@@ -235,7 +233,7 @@ class StrategyEngine:
                 return StrategyResult(as_of=as_of, strategy_id=strategy_id)
 
         # 基础过滤: 策略默认 basic_filter 兜底, 用户 override 优先覆盖。
-        # 这样策略文件里写的 exclude_st/price_min 等默认值即使前端没保存也能生效。
+        # 这样策略文件里写的 price_min/amount_min 等默认值即使前端没保存也能生效。
         bf = dict(s.basic_filter) if s.basic_filter else {}
         if overrides and overrides.get("basic_filter"):
             bf.update(overrides["basic_filter"])
@@ -337,63 +335,49 @@ class StrategyEngine:
 
     @staticmethod
     def _basic_filter_expr(df: pl.DataFrame, bf: dict) -> pl.Expr | None:
-        """构建基础过滤表达式。回测可复用为买入候选 mask，不删除行情行。"""
+        """构建基础过滤表达式。回测可复用为买入候选 mask，不删除行情行。
+
+        market_cap / float_cap / amount / turnover 均为 null-tolerant:
+        加密货币行没有股本/换手率数据 (列值为 null), 条件写成
+        ``is_null() | (表达式)``, 保证缺数据的行不被误杀。
+        """
         exprs: list[pl.Expr] = []
         if bf.get("price_min") is not None:
             exprs.append(pl.col("close") >= bf["price_min"])
         if bf.get("price_max") is not None:
             exprs.append(pl.col("close") <= bf["price_max"])
         if bf.get("market_cap_min") is not None and "total_shares" in df.columns:
-            exprs.append(
-                pl.col("close") * pl.col("total_shares") >= bf["market_cap_min"]
-            )
+            mc = pl.col("close") * pl.col("total_shares")
+            exprs.append(mc.is_null() | (mc >= bf["market_cap_min"]))
         if bf.get("market_cap_max") is not None and "total_shares" in df.columns:
-            exprs.append(
-                pl.col("close") * pl.col("total_shares") <= bf["market_cap_max"]
-            )
+            mc = pl.col("close") * pl.col("total_shares")
+            exprs.append(mc.is_null() | (mc <= bf["market_cap_max"]))
         # 流通市值
         if bf.get("float_cap_min") is not None and "float_shares" in df.columns:
-            exprs.append(
-                pl.col("close") * pl.col("float_shares") >= bf["float_cap_min"]
-            )
+            fc = pl.col("close") * pl.col("float_shares")
+            exprs.append(fc.is_null() | (fc >= bf["float_cap_min"]))
         if bf.get("float_cap_max") is not None and "float_shares" in df.columns:
-            exprs.append(
-                pl.col("close") * pl.col("float_shares") <= bf["float_cap_max"]
-            )
+            fc = pl.col("close") * pl.col("float_shares")
+            exprs.append(fc.is_null() | (fc <= bf["float_cap_max"]))
         if bf.get("amount_min") is not None:
-            exprs.append(pl.col("amount") >= bf["amount_min"])
+            exprs.append(
+                pl.col("amount").is_null() | (pl.col("amount") >= bf["amount_min"])
+            )
         if bf.get("amount_max") is not None:
-            exprs.append(pl.col("amount") <= bf["amount_max"])
-        # 换手率
+            exprs.append(
+                pl.col("amount").is_null() | (pl.col("amount") <= bf["amount_max"])
+            )
+        # 换手率 (加密为 null → 放行)
         if bf.get("turnover_min") is not None and "turnover_rate" in df.columns:
-            exprs.append(pl.col("turnover_rate") >= bf["turnover_min"])
+            exprs.append(
+                pl.col("turnover_rate").is_null()
+                | (pl.col("turnover_rate") >= bf["turnover_min"])
+            )
         if bf.get("turnover_max") is not None and "turnover_rate" in df.columns:
-            exprs.append(pl.col("turnover_rate") <= bf["turnover_max"])
-        if bf.get("exclude_st") and "name" in df.columns:
-            exprs.append(~pl.col("name").str.contains("(?i)ST|\\*ST|退"))
-        # 板块过滤
-        boards = bf.get("boards")
-        if boards and isinstance(boards, list) and len(boards) > 0:
-            board_exprs: list[pl.Expr] = []
-            for b in boards:
-                if b == "沪主板":
-                    board_exprs.append(pl.col("symbol").str.starts_with("60"))
-                elif b == "深主板":
-                    board_exprs.append(
-                        pl.col("symbol").str.starts_with("00")
-                        | pl.col("symbol").str.starts_with("001")
-                    )
-                elif b == "创业板":
-                    board_exprs.append(
-                        pl.col("symbol").str.starts_with("300")
-                        | pl.col("symbol").str.starts_with("301")
-                    )
-                elif b == "科创板":
-                    board_exprs.append(pl.col("symbol").str.starts_with("688"))
-                elif b == "北交所":
-                    board_exprs.append(pl.col("symbol").str.contains(r"\.BJ$"))
-            if board_exprs:
-                exprs.append(pl.any_horizontal(board_exprs))
+            exprs.append(
+                pl.col("turnover_rate").is_null()
+                | (pl.col("turnover_rate") <= bf["turnover_max"])
+            )
         if exprs:
             return pl.all_horizontal(exprs)
         return None

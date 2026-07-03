@@ -6,10 +6,9 @@ import { PageHeader } from '@/components/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
 import { api, type MonitorRule, type AlertEvent, type MonitorCondition } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
-import { fmtPrice, fmtPct } from '@/lib/format'
+import { fmtPrice, fmtPct, priceColorClass } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { cnSignal } from '@/lib/signals'
-import { boardTag } from '@/components/stock-table/primitives'
 import { markSeen, resetBadge, leaveMonitorPage } from '@/lib/monitorBadge'
 import { RuleEditor } from '@/components/monitor/RuleEditor'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
@@ -282,33 +281,24 @@ function AlertsList({ alertsQuery, confirmClear, setConfirmClear, total, enterTs
                     return (
                       <>
                         <div className="flex items-center gap-2 flex-wrap">
-                          {ev.symbol && (() => {
-                            const board = boardTag(ev.symbol)
-                            return (
-                              <button
-                                onClick={() => setPreviewEv(ev)}
-                                className="inline-flex items-center gap-1.5 rounded hover:bg-elevated/50 px-1 -mx-1 transition-colors cursor-pointer"
-                                title="点击查看日K"
-                              >
-                                <span className="font-mono text-xs font-medium text-foreground hover:text-accent">{ev.symbol}</span>
-                                {board && (
-                                  <span className={`inline-flex items-center justify-center h-3.5 w-3.5 rounded text-[8px] font-bold leading-none border ${board.color}`}>
-                                    {board.label}
-                                  </span>
-                                )}
-                                {ev.name && <span className="text-xs text-secondary truncate max-w-[8rem] hover:text-foreground">{ev.name}</span>}
-                              </button>
-                            )
-                          })()}
+                          {ev.symbol && (
+                            <button
+                              onClick={() => setPreviewEv(ev)}
+                              className="inline-flex items-center gap-1.5 rounded hover:bg-elevated/50 px-1 -mx-1 transition-colors cursor-pointer"
+                              title="点击查看日K"
+                            >
+                              <span className="font-mono text-xs font-medium text-foreground hover:text-accent">{ev.symbol}</span>
+                              {ev.name && <span className="text-xs text-secondary truncate max-w-[8rem] hover:text-foreground">{ev.name}</span>}
+                            </button>
+                          )}
                           {ev.price != null && (
-                            <span className={cn('inline-flex items-center gap-0.5 text-[11px] font-mono', _pct >= 0 ? 'text-danger' : 'text-bear')}>
+                            <span className={cn('inline-flex items-center gap-0.5 text-[11px] font-mono', priceColorClass(_pct))}>
                               {_pct >= 0 ? <TrendingUp className="h-2.5 w-2.5" /> : <TrendingDown className="h-2.5 w-2.5" />}
                               {fmtPrice(ev.price)}
                             </span>
                           )}
                           {ev.change_pct != null && (
-                            <span className={cn('text-[11px] font-mono font-medium',
-                              _pct >= 0 ? 'text-danger' : 'text-bear')}>
+                            <span className={cn('text-[11px] font-mono font-medium', priceColorClass(_pct))}>
                               {fmtPct(_pct)}
                             </span>
                           )}
@@ -317,7 +307,7 @@ function AlertsList({ alertsQuery, confirmClear, setConfirmClear, total, enterTs
                           </span>
                         </div>
                         <div className="mt-1 flex items-center gap-1.5">
-                          <span className={cn('text-[11px] font-medium', isNew ? 'text-danger' : 'text-emerald-400')}>
+                          <span className={cn('text-[11px] font-medium', isNew ? 'text-bull' : 'text-muted')}>
                             {isNew ? '进入' : '移出'}
                           </span>
                           <span className="text-[11px] text-foreground/80">策略</span>
@@ -328,33 +318,24 @@ function AlertsList({ alertsQuery, confirmClear, setConfirmClear, total, enterTs
                   })() : (
                     <>
                       <div className="flex items-center gap-2 flex-wrap">
-                        {ev.symbol && (() => {
-                          const board = boardTag(ev.symbol)
-                          return (
-                            <button
-                              onClick={() => setPreviewEv(ev)}
-                              className="inline-flex items-center gap-1.5 rounded hover:bg-elevated/50 px-1 -mx-1 transition-colors cursor-pointer"
-                              title="点击查看日K"
-                            >
-                              <span className="font-mono text-xs font-medium text-foreground hover:text-accent">{ev.symbol}</span>
-                              {board && (
-                                <span className={`inline-flex items-center justify-center h-3.5 w-3.5 rounded text-[8px] font-bold leading-none border ${board.color}`}>
-                                  {board.label}
-                                </span>
-                              )}
-                              {ev.name && <span className="text-xs text-secondary truncate max-w-[8rem] hover:text-foreground">{ev.name}</span>}
-                            </button>
-                          )
-                        })()}
+                        {ev.symbol && (
+                          <button
+                            onClick={() => setPreviewEv(ev)}
+                            className="inline-flex items-center gap-1.5 rounded hover:bg-elevated/50 px-1 -mx-1 transition-colors cursor-pointer"
+                            title="点击查看日K"
+                          >
+                            <span className="font-mono text-xs font-medium text-foreground hover:text-accent">{ev.symbol}</span>
+                            {ev.name && <span className="text-xs text-secondary truncate max-w-[8rem] hover:text-foreground">{ev.name}</span>}
+                          </button>
+                        )}
                         {ev.price != null && (
-                          <span className={cn('inline-flex items-center gap-0.5 text-[11px] font-mono', (ev.change_pct ?? 0) >= 0 ? 'text-danger' : 'text-bear')}>
+                          <span className={cn('inline-flex items-center gap-0.5 text-[11px] font-mono', priceColorClass(ev.change_pct ?? 0))}>
                             {(ev.change_pct ?? 0) >= 0 ? <TrendingUp className="h-2.5 w-2.5" /> : <TrendingDown className="h-2.5 w-2.5" />}
                             {fmtPrice(ev.price)}
                           </span>
                         )}
                         {ev.change_pct != null && (
-                          <span className={cn('text-[11px] font-mono font-medium',
-                            ev.change_pct >= 0 ? 'text-danger' : 'text-bear')}>
+                          <span className={cn('text-[11px] font-mono font-medium', priceColorClass(ev.change_pct))}>
                             {fmtPct(ev.change_pct)}
                           </span>
                         )}
@@ -522,7 +503,7 @@ function RulesList({ rulesQuery, onEdit }: {
         />
       ) : (
         rules.map(r => {
-          // 名称截取: "策略监控 · MACD金叉" → "MACD金叉", "个股信号监控 · 300750.SZ" → "个股信号监控"
+          // 名称截取: "策略监控 · MACD金叉" → "MACD金叉", "个股信号监控 · NVDA.US" → "个股信号监控"
           const dotIdx = r.name.indexOf(' · ')
           const displayName = dotIdx >= 0 ? r.name.slice(dotIdx + 3) : r.name
           return (

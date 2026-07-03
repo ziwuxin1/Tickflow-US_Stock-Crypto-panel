@@ -18,9 +18,11 @@ export default {
         secondary:  'hsl(var(--fg-secondary) / <alpha-value>)',
         muted:      'hsl(var(--fg-muted) / <alpha-value>)',
         accent:     'hsl(var(--accent) / <alpha-value>)',
-        // A 股语义色:仅用于价格 / K 线,不用于 UI 状态
+        // 涨跌语义色(美股/加密惯例: 绿涨红跌):仅用于价格 / K 线,不用于 UI 状态
         bull:       'hsl(var(--bull) / <alpha-value>)',
         bear:       'hsl(var(--bear) / <alpha-value>)',
+        // UI 状态色: success 用于成功态(与涨跌解耦)
+        success:    'hsl(var(--success) / <alpha-value>)',
         warning:    'hsl(var(--warning) / <alpha-value>)',
         danger:     'hsl(var(--danger) / <alpha-value>)',
       },

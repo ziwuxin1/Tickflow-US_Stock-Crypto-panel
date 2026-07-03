@@ -27,7 +27,7 @@ def load() -> dict:
     if p.exists():
         try:
             return json.loads(p.read_text(encoding="utf-8"))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("secrets.json malformed: %s", e)
     return {}
 
@@ -38,10 +38,9 @@ def save(updates: dict) -> dict:
     current.update({k: v for k, v in updates.items() if v is not None})
     p = _path()
     p.write_text(json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")
-    try:
+    import contextlib
+    with contextlib.suppress(OSError):
         os.chmod(p, 0o600)
-    except OSError:
-        pass
     return current
 
 

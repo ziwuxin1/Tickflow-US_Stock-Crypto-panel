@@ -2,7 +2,6 @@ import { useEffect, useRef, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { SSE_INVALIDATE_PREFIXES, QK } from './queryKeys'
 import { getQueryConfig } from './useQueryConfig'
-import { toast } from '@/components/Toast'
 import { pushAlertToasts } from '@/components/AlertToast'
 import { feedReviewEvent } from './reviewStore'
 import type { StrategyAlertEvent } from './api'
@@ -27,23 +26,14 @@ export function useQuoteStream(
   pagesRef.current = sseRefreshPages
 
   const handleAlerts = useCallback((alerts: StrategyAlertEvent[]) => {
-    // depth 系统接管通知: 单独处理, 不走 strategy 回调
-    const depthAlerts = alerts.filter(a => a.source === 'depth')
-    const strategyAlerts = alerts.filter(a => a.source !== 'depth')
-
-    // depth 通知直接 toast(防刷屏: 后端已在状态切换时才推)
-    for (const a of depthAlerts.slice(0, 1)) {
-      toast(a.message, 'success')
-    }
-
     // 监控告警: 用专用 AlertToast (整批只响一声, 每条都弹, 受 maxVisible 上限保护)
-    if (strategyAlerts.length > 0) {
+    if (alerts.length > 0) {
       // 有 onAlert 回调时走回调, 否则弹 AlertToast
       if (onAlert) {
-        onAlert(strategyAlerts)
+        onAlert(alerts)
       }
       // 批量弹通知 (去掉了 slice(0,2) 截断, 让每只新命中都弹 toast; 声音整批只响一次)
-      pushAlertToasts(strategyAlerts as any)
+      pushAlertToasts(alerts as any)
     }
   }, [onAlert])
 
@@ -87,13 +77,6 @@ export function useQuoteStream(
               ),
           })
         }
-      })
-
-      es.addEventListener('depth_updated', () => {
-        // 五档修正完成: 刷新连板梯队 + 看板封单数据。
-        // 不受实时行情开关限制 — 修正轮询独立于行情轮询, 用户开了修正就想看实时封单。
-        qc.invalidateQueries({ queryKey: ['limit-ladder'] })
-        qc.invalidateQueries({ queryKey: ['overview-market'] })
       })
 
       es.addEventListener('strategy_alert', (e: MessageEvent) => {

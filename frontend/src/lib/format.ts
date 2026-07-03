@@ -1,8 +1,16 @@
 // 数字 / 价格 / 涨跌幅 格式化(§6.0.2 等宽数字)
 
-export function fmtPrice(v: number | null | undefined, digits = 2): string {
+/**
+ * 价格格式化 — 精度自适应(兼容低价加密币)：
+ * 显式传 digits 时按 digits;否则 ≥1 保留 2 位小数, <1 保留 4 位, <0.01 保留 6 位有效小数。
+ */
+export function fmtPrice(v: number | null | undefined, digits?: number): string {
   if (v == null || Number.isNaN(v)) return '—'
-  return v.toFixed(digits)
+  if (digits != null) return v.toFixed(digits)
+  const abs = Math.abs(v)
+  if (abs >= 1 || abs === 0) return v.toFixed(2)
+  if (abs >= 0.01) return v.toFixed(4)
+  return v.toFixed(6)
 }
 
 export function fmtPct(v: number | null | undefined, digits = 2): string {
@@ -13,12 +21,13 @@ export function fmtPct(v: number | null | undefined, digits = 2): string {
 
 export function fmtVolume(v: number | null | undefined): string {
   if (v == null || Number.isNaN(v)) return '—'
-  if (v >= 1e8) return `${(v / 1e8).toFixed(2)}亿`
-  if (v >= 1e4) return `${(v / 1e4).toFixed(2)}万`
+  if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`
+  if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`
+  if (v >= 1e3) return `${(v / 1e3).toFixed(2)}K`
   return v.toFixed(0)
 }
 
-// A 股语义色:红涨绿跌 → 仅用于价格相关元素
+// 涨跌语义色(美股/加密惯例):绿涨红跌 → 仅用于价格相关元素
 export function priceColorClass(v: number | null | undefined): string {
   if (v == null || Number.isNaN(v) || v === 0) return 'text-muted'
   return v > 0 ? 'text-bull' : 'text-bear'
@@ -26,9 +35,10 @@ export function priceColorClass(v: number | null | undefined): string {
 
 export function fmtBigNum(v: number | null | undefined): string {
   if (v == null || Number.isNaN(v)) return '—'
-  if (v >= 1_000_000_000_000) return `${(v / 1_000_000_000_000).toFixed(2)}万亿`
-  if (v >= 100_000_000) return `${(v / 100_000_000).toFixed(2)}亿`
-  if (v >= 10_000) return `${(v / 10_000).toFixed(0)}万`
+  if (v >= 1e12) return `${(v / 1e12).toFixed(2)}T`
+  if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`
+  if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`
+  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`
   return v.toFixed(0)
 }
 
@@ -42,8 +52,9 @@ export function fmtDate(s: string | Date | null | undefined): string {
 // ===== Data 页面工具函数 =====
 
 export function formatNumber(n: number): string {
-  if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1)}亿`
-  if (n >= 10_000) return `${(n / 10_000).toFixed(1)}万`
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`
+  if (n >= 1e4) return `${(n / 1e3).toFixed(1)}K`
   return n.toLocaleString()
 }
 

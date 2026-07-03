@@ -22,8 +22,6 @@ def _panel_with_tail(symbols: list[str], n_data_days: int) -> pl.DataFrame:
                 "low": px,
                 "close": px,
                 "volume": 100_000,
-                "signal_limit_up": False,
-                "signal_limit_down": False,
             })
     return pl.DataFrame(rows).sort(["symbol", "date"])
 

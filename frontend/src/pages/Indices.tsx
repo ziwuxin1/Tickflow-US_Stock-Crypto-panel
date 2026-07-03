@@ -55,10 +55,10 @@ function fmtNum(v: number | null | undefined, digits = 2) {
 }
 
 const PINNED_INDEXES = [
-  { symbol: '000001.SH', name: '上证指数' },
-  { symbol: '399001.SZ', name: '深证成指' },
-  { symbol: '399006.SZ', name: '创业板指' },
-  { symbol: '000680.SH', name: '科创综指' },
+  { symbol: 'SPY.US', name: '标普500ETF' },
+  { symbol: 'QQQ.US', name: '纳指100ETF' },
+  { symbol: 'BTCUSDT', name: '比特币' },
+  { symbol: 'ETHUSDT', name: '以太坊' },
 ]
 
 function pinnedRank(item: IndexInstrument) {
@@ -75,9 +75,12 @@ export function Indices() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [linkedPrice, setLinkedPrice] = useState<number | null>(null)
 
-  // 分时数据需 Pro+ (kline.minute.batch) 能力
+  // 分时数据能力:按标的分钟K(kline.minute.by_symbol)或分时(intraday)任一即可。
+  // 指数分时端点复用 fetch_minute_single(按标的取分钟),免 key 时由免费源(yfinance/Binance)
+  // 叠加这两项能力,故此处按 by_symbol/intraday 判定,而非 Pro 档专属的批量 kline.minute.batch。
   const caps = useCapabilities()
-  const hasMinuteCap = !!caps.data?.capabilities?.['kline.minute.batch']
+  const capMap = caps.data?.capabilities
+  const hasMinuteCap = !!(capMap?.['kline.minute.by_symbol'] || capMap?.['intraday'])
 
   const list = useQuery({
     queryKey: QK.indexList,
@@ -333,7 +336,6 @@ export function Indices() {
                         prevClose={prevClose}
                         date={selectedDate ?? undefined}
                         symbol={selectedSymbol}
-                        showLimitLines={false}
                         showAvgLine={false}
                         onPriceHover={setLinkedPrice}
                       />

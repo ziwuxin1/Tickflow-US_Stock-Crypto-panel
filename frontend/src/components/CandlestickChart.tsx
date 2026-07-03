@@ -7,6 +7,7 @@ import {
   type CandlestickData,
   type HistogramData,
 } from 'lightweight-charts'
+import { BULL, BEAR } from '@/lib/palette'
 
 export interface OHLC {
   date: string
@@ -18,21 +19,23 @@ export interface OHLC {
 }
 
 export function fmtBigNum(v: number): string {
-  if (v >= 1_000_000_000_000) return `${(v / 1_000_000_000_000).toFixed(2)}万亿`
-  if (v >= 100_000_000) return `${(v / 100_000_000).toFixed(2)}亿`
-  if (v >= 10_000) return `${(v / 10_000).toFixed(0)}万`
+  if (v >= 1e12) return `${(v / 1e12).toFixed(2)}T`
+  if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`
+  if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`
+  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`
   return v.toFixed(0)
 }
 
+// 绿涨红跌（国际惯例）— 色值取自 lib/palette
 const THEME = {
   background: 'transparent',
   textColor: '#A1A1AA',
   gridColor: 'rgba(255,255,255,0.04)',
   borderColor: '#27272A',
-  bull: '#F04438',
-  bear: '#12B76A',
-  volBull: 'rgba(240,68,56,0.4)',
-  volBear: 'rgba(18,183,106,0.4)',
+  bull: BULL,
+  bear: BEAR,
+  volBull: 'rgba(18,183,106,0.4)',
+  volBear: 'rgba(240,68,56,0.4)',
 }
 
 interface Props {

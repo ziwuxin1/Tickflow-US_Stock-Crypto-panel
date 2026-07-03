@@ -15,7 +15,7 @@ interface ProbeResult {
 }
 
 function MinuteProbePanel() {
-  const [symbol, setSymbol] = useState('603261.SH')
+  const [symbol, setSymbol] = useState('NVDA.US')
   const [days, setDays] = useState(10)
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState<ProbeResult[]>([])
@@ -76,7 +76,7 @@ function MinuteProbePanel() {
           <input
             value={symbol}
             onChange={(e) => setSymbol(e.target.value)}
-            placeholder="603261.SH"
+            placeholder="NVDA.US"
             className="w-44 rounded-btn border border-border bg-base px-3 py-1.5 text-sm text-foreground outline-none focus:border-accent"
             onKeyDown={(e) => e.key === 'Enter' && !loading && runProbe()}
           />

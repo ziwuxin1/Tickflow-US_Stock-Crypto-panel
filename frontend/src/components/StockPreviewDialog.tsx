@@ -5,6 +5,7 @@ import { X, RefreshCw, Clock } from 'lucide-react'
 import { api } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { cnSignal } from '@/lib/signals'
+import { priceColorClass } from '@/lib/format'
 import { StockPanel, getDefaultRange } from '@/components/StockPanel'
 import { DatePicker } from '@/components/DatePicker'
 import { RuleEditor } from '@/components/monitor/RuleEditor'
@@ -23,20 +24,11 @@ interface Props {
   } | null
 }
 
-// ===== 板块标识（与 Screener 列表一致）=====
-
 // 预设快捷范围（只保留半年和1年）
 const PRESETS: { label: string; months: number }[] = [
   { label: '半年', months: 6 },
   { label: '1年', months: 12 },
 ]
-
-function boardTag(symbol: string): { label: string; color: string } | null {
-  if (/^(300|301)/.test(symbol)) return { label: '创', color: 'text-[#f97316] bg-[#f97316]/12 border-[#f97316]/25' }
-  if (/^688/.test(symbol))       return { label: '科', color: 'text-purple-400 bg-purple-400/12 border-purple-400/25' }
-  if (/^[48]/.test(symbol))      return { label: '北', color: 'text-cyan-400 bg-cyan-400/12 border-cyan-400/25' }
-  return null
-}
 
 export function StockPreviewDialog({ symbol, name, onClose, triggerInfo }: Props) {
   const [showIntraday, setShowIntraday] = useState(false)
@@ -102,14 +94,6 @@ export function StockPreviewDialog({ symbol, name, onClose, triggerInfo }: Props
             {/* 顶栏 */}
             <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
               <div className="flex items-center gap-2">
-                {(() => {
-                  const board = symbol ? boardTag(symbol) : null
-                  return board ? (
-                    <span className={`inline-flex items-center justify-center w-[18px] h-[18px] rounded text-[9px] font-bold leading-none border ${board.color}`}>
-                      {board.label}
-                    </span>
-                  ) : null
-                })()}
                 <span className="font-mono text-sm font-medium text-foreground">{symbol}</span>
                 {name && <span className="text-xs text-muted">{name}</span>}
               </div>
@@ -208,7 +192,7 @@ export function StockPreviewDialog({ symbol, name, onClose, triggerInfo }: Props
                     <span className="text-[11px] font-mono text-foreground/80">{triggerInfo.price.toFixed(2)}</span>
                   )}
                   {triggerInfo.changePct != null && (
-                    <span className={`text-[11px] font-mono font-medium ${triggerInfo.changePct >= 0 ? 'text-danger' : 'text-bear'}`}>
+                    <span className={`text-[11px] font-mono font-medium ${priceColorClass(triggerInfo.changePct)}`}>
                       {triggerInfo.changePct >= 0 ? '+' : ''}{(triggerInfo.changePct * 100).toFixed(2)}%
                     </span>
                   )}
