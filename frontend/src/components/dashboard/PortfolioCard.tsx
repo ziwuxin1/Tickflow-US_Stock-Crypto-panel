@@ -34,7 +34,7 @@ export function PortfolioCard() {
   const empty = !isLoading && count === 0
 
   return (
-    <GlassCard variant="stat" corners style={{ minWidth: 0, cursor: 'pointer', display: 'flex', flexDirection: 'column' }}>
+    <GlassCard variant="stat" corners style={{ minWidth: 0, cursor: 'pointer', display: 'flex', flexDirection: 'column', flex: 1 }}>
       <div onClick={() => navigate('/portfolio')} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
         {/* 黄色切角题栏 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: NEON, padding: '6px 12px', clipPath: clipTL(10) }}>
@@ -44,7 +44,7 @@ export function PortfolioCard() {
           <span style={{ fontFamily: MONO, fontSize: 8.5, fontWeight: 700, color: INK }}>{count} 只</span>
         </div>
 
-        <div style={{ padding: '13px 14px', display: 'flex', flexDirection: 'column', gap: 9, flex: 1 }}>
+        <div style={{ padding: '13px 14px', display: 'flex', flexDirection: 'column', gap: 9, flex: 1, justifyContent: 'center' }}>
           {empty ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5, justifyContent: 'center', flex: 1 }}>
               <span style={{ fontSize: 12.5, fontWeight: 700, color: TXT_BODY }}>暂无持仓</span>
