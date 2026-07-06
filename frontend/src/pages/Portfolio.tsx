@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
@@ -10,7 +10,7 @@ import { SettingsModal } from '@/components/data/SettingsModal'
 import { StockFinancialSearch } from '@/components/financials/StockFinancialSearch'
 import { StockLogo } from '@/components/StockLogo'
 import {
-  DOWN, INK, MONO, NEON, PANEL_BG, TXT_BODY, TXT_FAINTEST, TXT_SECONDARY, TXT_WEAK, UP, clipTL,
+  DOWN, INK, MONO, NEON, PANEL_BG, TXT_BODY, TXT_FAINTEST, TXT_SECONDARY, TXT_WEAK, UP, clipBR, clipTL,
 } from '@/components/dashboard/tokens'
 import { portfolioApi, type EquityPoint, type PortfolioPosition, type PortfolioTrade, type PortfolioTradeIn } from '@/lib/api'
 import { fmtPrice } from '@/lib/format'
@@ -43,13 +43,20 @@ function StatCell({ label, en, value, color }: { label: string; en: string; valu
   )
 }
 
-/** 净值/盈亏曲线 — SVG 面积折线(沿用 BalanceChart 视觉语言) */
+/**
+ * 累计盈亏曲线 — 黄色交互折线(对齐看板 BalanceChart 视觉语言):
+ * 竖纹渐隐填充 + 酸性黄折线光晕 + 鼠标吸附十字线/光晕/圆环点/切角气泡。
+ */
 function EquityChart({ curve }: { curve: EquityPoint[] }) {
+  const uid = useId().replace(/:/g, '')
+  const [hoverI, setHoverI] = useState<number | null>(null)
   const VW = 960
   const VH = 240
+
   if (curve.length < 2) {
     return <DotGridEmpty text="暂无净值数据 · 先记一笔交易" minHeight={200} maskStop={40} />
   }
+
   const vals = curve.map(p => p.pnl)
   const rawMin = Math.min(...vals, 0)
   const rawMax = Math.max(...vals, 0)
@@ -58,11 +65,17 @@ function EquityChart({ curve }: { curve: EquityPoint[] }) {
   const hi = rawMax + pad
   const px = (i: number) => (i / (curve.length - 1)) * VW
   const py = (v: number) => VH - ((v - lo) / (hi - lo)) * VH
-  const last = curve[curve.length - 1].pnl
-  const stroke = last >= 0 ? UP : DOWN
-  const line = curve.map((p, i) => `${px(i).toFixed(1)},${py(p.pnl).toFixed(1)}`).join(' ')
+  const polyline = curve.map((p, i) => `${px(i).toFixed(1)},${py(p.pnl).toFixed(1)}`).join(' ')
   const area = `M0 ${VH} L${curve.map((p, i) => `${px(i).toFixed(1)} ${py(p.pnl).toFixed(1)}`).join(' L')} L${VW} ${VH} Z`
   const zeroY = py(0)
+
+  // 默认高亮 = 最新点; 悬停时吸附到最近点
+  const hlI = hoverI != null ? Math.min(hoverI, curve.length - 1) : curve.length - 1
+  const hlPct = (hlI / (curve.length - 1)) * 100
+  const hlYPct = (py(vals[hlI]) / VH) * 100
+  const flip = hlPct >= 62
+  const hlUp = vals[hlI] >= 0
+
   const yTicks = Array.from({ length: 5 }, (_, i) => hi - ((hi - lo) * i) / 4)
   const xCount = Math.min(6, curve.length)
   const xLabels = Array.from({ length: xCount }, (_, i) => {
@@ -70,25 +83,67 @@ function EquityChart({ curve }: { curve: EquityPoint[] }) {
     return curve[idx].date.slice(5)
   })
   const fmtAxis = (v: number) => Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(0)
+
   return (
     <div style={{ display: 'flex', gap: 8 }}>
       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: 200, padding: '2px 0', fontFamily: MONO, fontSize: 8.5, color: TXT_FAINTEST, textAlign: 'right', flex: 'none', width: 42 }}>
         {yTicks.map((v, i) => <span key={i}>{fmtAxis(v)}</span>)}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ position: 'relative', height: 200 }}>
+        <div
+          onMouseMove={(e) => {
+            const r = e.currentTarget.getBoundingClientRect()
+            const f = Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1)
+            const i = Math.round(f * (curve.length - 1))
+            if (i !== hoverI) setHoverI(i)
+          }}
+          onMouseLeave={() => setHoverI(null)}
+          style={{ position: 'relative', height: 200, cursor: 'crosshair' }}
+        >
           <svg width="100%" height="100%" viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, display: 'block' }}>
             <defs>
-              <linearGradient id="pfEqFade" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={stroke} stopOpacity=".28" />
-                <stop offset="100%" stopColor={stroke} stopOpacity=".02" />
+              <pattern id={`eqBars-${uid}`} width="5" height="6" patternUnits="userSpaceOnUse">
+                <rect x="0" y="0" width="1.6" height="6" fill="rgba(213,240,33,.5)" />
+              </pattern>
+              <linearGradient id={`eqFade-${uid}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#fff" stopOpacity=".55" />
+                <stop offset="100%" stopColor="#fff" stopOpacity=".05" />
               </linearGradient>
+              <mask id={`eqMask-${uid}`}><path d={area} fill={`url(#eqFade-${uid})`} /></mask>
             </defs>
             {/* 零轴基准线 */}
-            <line x1="0" y1={zeroY} x2={VW} y2={zeroY} stroke="rgba(213,240,33,.25)" strokeWidth="1" strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />
-            <path d={area} fill="url(#pfEqFade)" />
-            <polyline points={line} fill="none" stroke={stroke} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" style={{ filter: `drop-shadow(0 0 5px ${stroke}66)` }} />
+            <line x1="0" y1={zeroY} x2={VW} y2={zeroY} stroke="rgba(213,240,33,.28)" strokeWidth="1" strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />
+            <rect x="0" y="0" width={VW} height={VH} fill={`url(#eqBars-${uid})`} mask={`url(#eqMask-${uid})`} />
+            <polyline
+              points={polyline}
+              fill="none" stroke={NEON} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+              style={{ filter: 'drop-shadow(0 0 5px rgba(213,240,33,.4))' }}
+            />
           </svg>
+          {/* 十字线 + 光晕 + 圆环点 + 切角气泡 */}
+          <span style={{ position: 'absolute', top: 0, bottom: 0, left: `${hlPct}%`, borderLeft: '1px dashed rgba(213,240,33,.45)', pointerEvents: 'none' }} />
+          <span style={{ position: 'absolute', left: 0, right: 0, top: `${hlYPct}%`, borderTop: '1px dashed rgba(213,240,33,.35)', pointerEvents: 'none' }} />
+          <span style={{ position: 'absolute', left: `${hlPct}%`, top: `${hlYPct}%`, width: 150, height: 150, transform: 'translate(-50%,-50%)', background: 'radial-gradient(circle,rgba(213,240,33,.22),transparent 65%)', pointerEvents: 'none' }} />
+          <span style={{ position: 'absolute', left: `${hlPct}%`, top: `${hlYPct}%`, width: 9, height: 9, transform: 'translate(-50%,-50%)', background: INK, border: `2px solid ${NEON}`, borderRadius: '50%', boxShadow: '0 0 10px rgba(213,240,33,.7)', pointerEvents: 'none' }} />
+          <div
+            style={{
+              position: 'absolute', left: `${hlPct}%`, top: `${hlYPct}%`,
+              transform: flip ? 'translate(-108%,-50%)' : 'translate(14px,-50%)',
+              display: 'flex', alignItems: 'center', pointerEvents: 'none',
+              transition: 'left .08s linear, top .08s linear',
+            }}
+          >
+            <span style={{ width: 22, height: 22, background: 'rgba(213,240,33,.15)', border: '1px solid rgba(213,240,33,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: hlUp ? NEON : DOWN, fontSize: 11, fontWeight: 700, flex: 'none' }}>
+              {hlUp ? '↑' : '↓'}
+            </span>
+            <div style={{ background: 'rgba(18,16,10,.94)', border: '1px solid rgba(213,240,33,.4)', padding: '7px 13px', display: 'flex', flexDirection: 'column', gap: 2, clipPath: clipBR(8) }}>
+              <span style={{ fontFamily: MONO, fontSize: 13.5, fontWeight: 700, color: hlUp ? TXT_BODY : DOWN, whiteSpace: 'nowrap' }}>
+                {money(vals[hlI], true)}
+              </span>
+              <span style={{ fontFamily: MONO, fontSize: 7, color: TXT_WEAK, letterSpacing: 1.5 }}>{curve[hlI].date}</span>
+            </div>
+          </div>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: MONO, fontSize: 8.5, color: TXT_FAINTEST, letterSpacing: 1, marginTop: 4 }}>
           {xLabels.map((l, i) => <span key={`${l}-${i}`}>{l}</span>)}
