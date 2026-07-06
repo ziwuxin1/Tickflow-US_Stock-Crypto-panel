@@ -16,7 +16,6 @@ import { BalanceChart } from '@/components/dashboard/BalanceChart'
 import { CryptoSnapshotCard } from '@/components/dashboard/CryptoSnapshotCard'
 import { LeaderboardCard } from '@/components/dashboard/LeaderboardCard'
 import { MarketTickerCards } from '@/components/dashboard/MarketTickerCards'
-import { MonitorCenterCard } from '@/components/dashboard/MonitorCenterCard'
 import { PortfolioCard } from '@/components/dashboard/PortfolioCard'
 import { RadarCard } from '@/components/dashboard/RadarCard'
 import { StatCards } from '@/components/dashboard/StatCards'
@@ -256,9 +255,8 @@ export function Dashboard() {
           <RadarCard radar={data.radar} score={score} />
           <TrendMonitorCard data={data} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
-            <PortfolioCard />
             <CryptoSnapshotCard indices={data.indices} />
-            <MonitorCenterCard />
+            <PortfolioCard />
           </div>
         </div>
 
