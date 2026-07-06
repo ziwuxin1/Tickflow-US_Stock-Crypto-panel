@@ -6,6 +6,7 @@ import { CpTopBar } from '@/components/cyberpunk/CpTopBar'
 import { CpFooter } from '@/components/cyberpunk/CpFooter'
 import { CornerMarks } from '@/components/dashboard/GlassCard'
 import { DotGridEmpty } from '@/components/dashboard/DotGridEmpty'
+import { PortfolioAllocationCard } from '@/components/dashboard/PortfolioAllocationCard'
 import { SettingsModal } from '@/components/data/SettingsModal'
 import { StockFinancialSearch } from '@/components/financials/StockFinancialSearch'
 import { StockLogo } from '@/components/StockLogo'
@@ -223,7 +224,8 @@ export function Portfolio() {
           <StatCell label="今日盈亏" en="TODAY.P&L" value={money(totals?.today_pnl, true)} color={pnlColor(totals?.today_pnl)} />
         </div>
 
-        {/* 净值曲线 */}
+        {/* 净值曲线 + 持仓分布 */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1.7fr 1fr', gap: 18, alignItems: 'stretch' }}>
         <section style={{ position: 'relative', border: '1px solid rgba(213,240,33,.3)', background: PANEL_BG }}>
           <CornerMarks size={16} />
           <CardTitle
@@ -239,6 +241,8 @@ export function Portfolio() {
             <EquityChart curve={curve} />
           </div>
         </section>
+          <PortfolioAllocationCard />
+        </div>
 
         {/* 持仓表 */}
         <section style={{ position: 'relative', border: '1px solid rgba(213,240,33,.3)', background: PANEL_BG }}>
