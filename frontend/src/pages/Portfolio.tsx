@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Trash2 } from 'lucide-react'
+import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { CpTopBar } from '@/components/cyberpunk/CpTopBar'
 import { CpFooter } from '@/components/cyberpunk/CpFooter'
 import { CornerMarks } from '@/components/dashboard/GlassCard'
@@ -12,7 +12,7 @@ import { StockLogo } from '@/components/StockLogo'
 import {
   DOWN, INK, MONO, NEON, PANEL_BG, TXT_BODY, TXT_FAINTEST, TXT_SECONDARY, TXT_WEAK, UP, clipTL,
 } from '@/components/dashboard/tokens'
-import { portfolioApi, type EquityPoint, type PortfolioPosition, type PortfolioTradeIn } from '@/lib/api'
+import { portfolioApi, type EquityPoint, type PortfolioPosition, type PortfolioTrade, type PortfolioTradeIn } from '@/lib/api'
 import { fmtPrice } from '@/lib/format'
 
 /** 金额: 千分位, 2 位小数, 可选强制符号 */
@@ -117,6 +117,7 @@ export function Portfolio() {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [showForm, setShowForm] = useState(false)
+  const [editing, setEditing] = useState<PortfolioTrade | null>(null)
 
   const summary = useQuery({ queryKey: ['portfolio', 'summary'], queryFn: portfolioApi.summary, refetchInterval: 30_000 })
   const tradesQ = useQuery({ queryKey: ['portfolio', 'trades'], queryFn: portfolioApi.trades })
@@ -150,7 +151,7 @@ export function Portfolio() {
           </span>
           <div style={{ flex: 1 }} />
           <button
-            onClick={() => setShowForm(true)}
+            onClick={() => { setEditing(null); setShowForm(true) }}
             className="cp-btn-solid inline-flex items-center gap-1.5 px-4 h-8 text-xs font-bold tracking-wider"
             style={{ background: NEON, color: INK, clipPath: 'polygon(0 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%)' }}
           >
@@ -243,7 +244,7 @@ export function Portfolio() {
               <span style={{ ...HEAD, width: 90, textAlign: 'right' }}>数量</span>
               <span style={{ ...HEAD, width: 80, textAlign: 'right' }}>手续费</span>
               <span style={{ ...HEAD, flex: 1, minWidth: 100 }}>备注</span>
-              <span style={{ ...HEAD, width: 40, textAlign: 'right' }} />
+              <span style={{ ...HEAD, width: 68, textAlign: 'right' }} />
             </div>
             {trades.length === 0 ? (
               <div style={{ padding: '8px 0' }}>
@@ -262,13 +263,22 @@ export function Portfolio() {
                 <span style={{ ...cellR, width: 90, color: TXT_SECONDARY }}>{t.qty}</span>
                 <span style={{ ...cellR, width: 80, color: TXT_WEAK }}>{t.fee ? `$${fmtPrice(t.fee)}` : '—'}</span>
                 <span style={{ flex: 1, minWidth: 100, fontSize: 11.5, color: TXT_WEAK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.note || '—'}</span>
-                <button
-                  onClick={() => { if (window.confirm(`删除这笔 ${t.symbol} ${t.side === 'buy' ? '买入' : '卖出'} 记录?`)) delMut.mutate(t.id) }}
-                  style={{ width: 40, display: 'flex', justifyContent: 'flex-end', color: TXT_FAINTEST, cursor: 'pointer', background: 'none', border: 'none' }}
-                  title="删除"
-                >
-                  <Trash2 className="h-3.5 w-3.5 hover:text-[#f75049]" />
-                </button>
+                <div style={{ width: 68, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                  <button
+                    onClick={() => { setEditing(t); setShowForm(true) }}
+                    style={{ color: TXT_FAINTEST, cursor: 'pointer', background: 'none', border: 'none' }}
+                    title="编辑"
+                  >
+                    <Pencil className="h-3.5 w-3.5 hover:text-[#d5f021]" />
+                  </button>
+                  <button
+                    onClick={() => { if (window.confirm(`删除这笔 ${t.symbol} ${t.side === 'buy' ? '买入' : '卖出'} 记录?`)) delMut.mutate(t.id) }}
+                    style={{ color: TXT_FAINTEST, cursor: 'pointer', background: 'none', border: 'none' }}
+                    title="删除"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 hover:text-[#f75049]" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -279,6 +289,7 @@ export function Portfolio() {
 
       {showForm && (
         <TradeFormDialog
+          editing={editing}
           onClose={() => setShowForm(false)}
           onSaved={() => { setShowForm(false); invalidate() }}
         />
@@ -287,22 +298,25 @@ export function Portfolio() {
   )
 }
 
-/** 录入弹窗 */
-function TradeFormDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [symbol, setSymbol] = useState('')
-  const [symbolName, setSymbolName] = useState('')
-  const [side, setSide] = useState<'buy' | 'sell'>('buy')
-  const [price, setPrice] = useState('')
-  const [qty, setQty] = useState('')
-  const [fee, setFee] = useState('')
+/** 录入 / 编辑弹窗 */
+function TradeFormDialog({ editing, onClose, onSaved }: { editing: PortfolioTrade | null; onClose: () => void; onSaved: () => void }) {
+  const isEdit = !!editing
+  const [symbol, setSymbol] = useState(editing?.symbol ?? '')
+  const [symbolName, setSymbolName] = useState(editing?.symbol ?? '')
+  const [side, setSide] = useState<'buy' | 'sell'>(editing?.side ?? 'buy')
+  const [price, setPrice] = useState(editing ? String(editing.price) : '')
+  const [qty, setQty] = useState(editing ? String(editing.qty) : '')
+  const [fee, setFee] = useState(editing?.fee ? String(editing.fee) : '')
   const today = new Date()
   const [tradedAt, setTradedAt] = useState(
-    `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`,
+    editing?.traded_at
+    ?? `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`,
   )
-  const [note, setNote] = useState('')
+  const [note, setNote] = useState(editing?.note ?? '')
 
   const addMut = useMutation({
-    mutationFn: (body: PortfolioTradeIn) => portfolioApi.addTrade(body),
+    mutationFn: (body: PortfolioTradeIn) =>
+      isEdit ? portfolioApi.updateTrade(editing!.id, body) : portfolioApi.addTrade(body),
     onSuccess: onSaved,
   })
 
@@ -327,7 +341,7 @@ function TradeFormDialog({ onClose, onSaved }: { onClose: () => void; onSaved: (
   const labelCls = 'text-[11px] font-bold tracking-wider text-[rgba(213,240,33,.8)]'
 
   return (
-    <SettingsModal title="记一笔交易" onClose={onClose}>
+    <SettingsModal title={isEdit ? '编辑交易' : '记一笔交易'} onClose={onClose}>
       <div className="flex flex-col gap-3.5">
         {/* 标的搜索 */}
         <div className="flex flex-col gap-1.5">
@@ -405,7 +419,7 @@ function TradeFormDialog({ onClose, onSaved }: { onClose: () => void; onSaved: (
             className="cp-btn-solid inline-flex items-center gap-1.5 px-5 h-9 text-sm font-bold tracking-wider disabled:opacity-40"
             style={{ background: NEON, color: INK, clipPath: 'polygon(0 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%)' }}
           >
-            {addMut.isPending ? '记录中…' : '确认记录'}
+            {addMut.isPending ? (isEdit ? '保存中…' : '记录中…') : (isEdit ? '保存修改' : '确认记录')}
           </button>
         </div>
       </div>
