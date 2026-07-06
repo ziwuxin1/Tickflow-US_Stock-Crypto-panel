@@ -11,6 +11,7 @@ import { Monitor } from './pages/Monitor'
 import { Dashboard } from './pages/Dashboard'
 import { AnalysisDetail } from './pages/AnalysisDetail'
 import { StockAnalysis } from './pages/StockAnalysis'
+import { Portfolio } from './pages/Portfolio'
 import { Review } from './pages/Review'
 import { Branding } from './pages/Branding'
 import { Settings } from './pages/Settings'
@@ -63,6 +64,7 @@ export const router = createBrowserRouter([
       { path: 'analysis', element: <Navigate to="/settings?tab=ext-pages" replace /> },
       { path: 'analysis/:menuId', element: <AnalysisDetail /> },
       { path: 'stock-analysis', element: <StockAnalysis /> },
+      { path: 'portfolio', element: <Portfolio /> },
       { path: 'review', element: <Review /> },
       { path: 'watchlist', element: <Watchlist /> },
       { path: 'screener', element: <Screener /> },

@@ -22,32 +22,36 @@ import {
 import { QK } from '@/lib/queryKeys'
 import { tierRank } from '@/lib/capability-labels'
 import {
-  Star,
   ScanSearch,
   History,
   FileText,
   Settings,
-  Key,
   Database,
   Loader2,
   LayoutDashboard,
   Tags,
   TrendingUp,
   BarChart3,
-  Sparkles,
   RadioTower,
   CheckCircle2,
   BookOpenCheck,
   ExternalLink,
+  Wallet,
 } from 'lucide-react'
-import { Logo } from './Logo'
 import { api, type IndexQuote } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { setCurrentTotal as setAlertTotal, useUnreadAlerts } from '@/lib/monitorBadge'
+import { BoltGlyph } from '@/components/dashboard/glyphs'
+import {
+  DOWN, GOLD, INK, MONO, NEON, TXT_TITLE, TXT_WEAK, UP, clipBR,
+} from '@/components/dashboard/tokens'
 
-// 品牌色 — 只用于 logo / brand 区域,不影响功能语义色
-const BRAND = '#8B5CF6'
 const TICKFLOW_REGISTER_URL = 'https://tickflow.org/auth/register?ref=V3KDKGXPEA'
+
+/** 页面底色: 暗红氛围(右上) + 微黄氛围(左) + 深黑 #0b0908 (design_handoff_cyberpunk) */
+const PAGE_BG =
+  'radial-gradient(1000px 700px at 78% -10%,rgba(120,20,30,.18),transparent 60%),' +
+  'radial-gradient(800px 600px at -5% 30%,rgba(213,240,33,.05),transparent 55%),#0b0908'
 
 const CORE_INDEXES = [
   { symbol: 'SPY.US', name: '标普500ETF' },
@@ -60,14 +64,13 @@ type CoreIndex = (typeof CORE_INDEXES)[number]
 
 const nav = [
   { to: '/',                label: '看板',     icon: LayoutDashboard },
-  { to: '/watchlist',  label: '自选',   icon: Star },
+  { to: '/stock-analysis',    label: '个股分析', icon: TrendingUp },
+  { to: '/portfolio',  label: '持仓组合', icon: Wallet },
   { to: '/screener',   label: '策略',   icon: ScanSearch },
   { to: '/backtest',   label: '回测',   icon: History },
-  { to: '/stock-analysis',    label: '个股分析', icon: TrendingUp },
   { to: '/financials', label: '财务分析', icon: FileText },
   { to: '/monitor', label: '监控中心', icon: RadioTower },
   { to: '/review',      label: '复盘',   icon: BookOpenCheck },
-  { to: '/indices', label: '指数', icon: BarChart3 },
   { to: '/data',       label: '数据',   icon: Database },
 ] as const
 
@@ -88,7 +91,28 @@ function indexPctClass(v: number | null | undefined) {
   return n > 0 ? 'text-bull' : 'text-bear'
 }
 
-/** 监控中心未读徽标 — 仅在非监控页且有未读时显示。 */
+/** 装饰边(18px 竖条带): 双平行竖线 + 亮黄光条段 + 方块标记 + 刻度线 */
+function EdgeDeco({ side }: { side: 'sidebar' | 'main' }) {
+  // sidebar: 贴侧边栏右缘, 元素靠 right 定位; main: 贴主区右缘(屏幕最右), 元素靠 left 定位(镜像)
+  const pos = (v: number) => (side === 'sidebar' ? { right: v } : { left: v })
+  return (
+    <div style={{ position: 'absolute', top: 0, bottom: 0, right: 0, width: 18, pointerEvents: 'none', zIndex: 6 }}>
+      <span style={{ position: 'absolute', top: 0, bottom: 0, width: 1, background: 'rgba(213,240,33,.45)', ...pos(2) }} />
+      <span style={{ position: 'absolute', top: 0, bottom: 0, width: 1, background: 'rgba(213,240,33,.18)', ...pos(10) }} />
+      <span style={{ position: 'absolute', top: '13%', width: 3, height: 175, background: NEON, boxShadow: '0 0 9px rgba(213,240,33,.55)', ...pos(8) }} />
+      <span style={{ position: 'absolute', top: 'calc(13% + 192px)', width: 4, height: 4, background: NEON, opacity: .85, ...pos(8) }} />
+      <span style={{ position: 'absolute', top: '56%', width: 4, height: 4, background: NEON, opacity: .85, ...pos(8) }} />
+      <span style={{ position: 'absolute', top: 'calc(56% + 15px)', width: 2, height: 46, background: NEON, opacity: .9, ...pos(8.5) }} />
+      <span style={{ position: 'absolute', top: '34%', width: 5, height: 1, background: 'rgba(213,240,33,.5)', ...pos(6) }} />
+      <span style={{ position: 'absolute', top: '72%', width: 5, height: 1, background: 'rgba(213,240,33,.5)', ...pos(6) }} />
+      {side === 'main' && (
+        <span style={{ position: 'absolute', top: '80%', width: 3, height: 110, background: NEON, opacity: .7, boxShadow: '0 0 7px rgba(213,240,33,.4)', left: 8 }} />
+      )}
+    </div>
+  )
+}
+
+/** 监控中心未读徽标 — 红色方块(CP), 仅在非监控页且有未读时显示。 */
 function MonitorBadge({ active }: { active: boolean }) {
   const unread = useUnreadAlerts()
   // 尊重用户设置: 可在菜单设置里关闭数字提示
@@ -97,8 +121,32 @@ function MonitorBadge({ active }: { active: boolean }) {
   })()
   if (active || unread <= 0 || !badgeEnabled) return null
   return (
-    <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[9px] font-bold text-white animate-pulse">
+    <span
+      className="animate-pulse shrink-0"
+      style={{
+        minWidth: 15, height: 15, padding: '0 3px', background: DOWN,
+        color: INK, fontSize: 9.5, fontWeight: 700, display: 'inline-flex',
+        alignItems: 'center', justifyContent: 'center', fontFamily: MONO,
+      }}
+    >
       {unread > 99 ? '99+' : unread}
+    </span>
+  )
+}
+
+/** BETA 徽章(个股分析 / 复盘) — 激活项(黄底)反色 */
+function BetaBadge({ active }: { active?: boolean }) {
+  return (
+    <span
+      className="shrink-0"
+      style={{
+        fontSize: 8.5, fontWeight: 700, letterSpacing: 1, fontFamily: MONO, padding: '1.5px 5px',
+        ...(active
+          ? { color: NEON, background: INK }
+          : { color: NEON, border: '1px solid rgba(213,240,33,.4)' }),
+      }}
+    >
+      BETA
     </span>
   )
 }
@@ -115,15 +163,16 @@ function SidebarIndexQuotes({ rows, items }: { rows: IndexQuote[] | undefined; i
         return (
           <NavLink
             key={item.symbol}
-            to={`/indices?symbol=${encodeURIComponent(item.symbol)}`}
-            className="block rounded bg-elevated/60 px-2 py-1.5 transition-colors hover:bg-elevated"
+            to={`/stock-analysis?symbol=${encodeURIComponent(item.symbol)}&name=${encodeURIComponent(item.name)}`}
+            className="block px-2 py-1.5 transition-colors hover:bg-[rgba(213,240,33,.08)]"
+            style={{ background: 'rgba(213,240,33,.04)', border: '1px solid rgba(213,240,33,.14)' }}
             title={`${item.name} ${item.symbol}`}
           >
             <div className="flex items-center justify-between gap-1">
-              <span className="text-[10px] text-secondary">{item.name}</span>
+              <span className="text-[10px]" style={{ color: '#b8b4a0' }}>{item.name}</span>
               <span className={`text-[10px] font-mono ${indexPctClass(pct)}`}>{fmtIndexPct(pct)}</span>
             </div>
-            <div className="mt-0.5 truncate font-mono text-[10px] text-foreground/80">
+            <div className="mt-0.5 truncate font-mono text-[10px]" style={{ color: '#e8e6d8' }}>
               {fmtIndexValue(value)}
             </div>
           </NavLink>
@@ -133,116 +182,89 @@ function SidebarIndexQuotes({ rows, items }: { rows: IndexQuote[] | undefined; i
   )
 }
 
-// ===== 档位卡片 =====
+const TIER_DESC: Record<string, string> = {
+  none: '未配置 Key · 仅历史日K',
+  free: '基础日K · 自选实时',
+  starter: '批量同步 · 行情池',
+  pro: '分钟K · 实时行情 · 盘口',
+  expert: 'WebSocket · 财务数据',
+}
+
+// ===== TickFlow 入口卡(档位) — 黄描边切角块 =====
 function TierBadge({ label, hasKey }: { label: string; hasKey?: boolean }) {
   const base = label.split(' ')[0].split('+')[0].toLowerCase()
   const isNone = base === 'none'
-
-  const tierConfig: Record<string, {
-    desc: string
-    tagBg: React.CSSProperties
-    dotStyle: React.CSSProperties
-    labelTextStyle: React.CSSProperties
-  }> = {
-    none: {
-      desc: '未配置 Key · 仅历史日K',
-      tagBg: { background: 'rgba(113,113,122,0.15)' },
-      dotStyle: { background: '#52525b' },
-      labelTextStyle: { color: '#71717a' },
-    },
-    free: {
-      desc: '基础日K · 自选实时',
-      tagBg: { background: 'rgba(113,113,122,0.3)' },
-      dotStyle: { background: '#71717a' },
-      labelTextStyle: { color: '#a1a1aa' },
-    },
-    starter: {
-      desc: '批量同步 · 行情池',
-      tagBg: { background: 'rgba(59,130,246,0.2)' },
-      dotStyle: { background: '#3b82f6' },
-      labelTextStyle: { color: '#60a5fa' },
-    },
-    pro: {
-      desc: '分钟K · 实时行情 · 盘口',
-      tagBg: { background: 'linear-gradient(135deg, rgba(168,85,247,0.2), rgba(124,58,237,0.15))' },
-      dotStyle: { background: 'linear-gradient(135deg, #a855f7, #7c3aed)' },
-      labelTextStyle: { background: 'linear-gradient(135deg, #c084fc, #a855f7)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' },
-    },
-    expert: {
-      desc: 'WebSocket · 财务数据',
-      tagBg: { background: 'linear-gradient(135deg, rgba(59,130,246,0.2), rgba(168,85,247,0.2), rgba(245,158,11,0.2))' },
-      dotStyle: { background: 'linear-gradient(135deg, #3b82f6, #a855f7, #f59e0b)' },
-      labelTextStyle: { background: 'linear-gradient(135deg, #60a5fa, #c084fc, #fbbf24)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' },
-    },
-  }
-
-  const t = tierConfig[base] || tierConfig.none
+  const desc = isNone && !hasKey ? '配置 Key 解锁更多能力' : (TIER_DESC[base] ?? TIER_DESC.none)
   // none 档显示英文「None」,无 label 时也显示「None」
-  const displayLabel = isNone ? 'None' : (label || 'None')
+  const displayLabel = (isNone ? 'None' : (label || 'None')).toUpperCase()
 
   return (
     <NavLink
       to="/settings?tab=account"
-      className="mt-2.5 group block -mx-2.5"
       title="API 设置"
+      className="group block"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px',
+        border: '1px solid rgba(213,240,33,.4)', background: 'rgba(213,240,33,.05)',
+        clipPath: clipBR(9), textDecoration: 'none',
+      }}
     >
-      <div className="relative overflow-hidden rounded-lg border border-blue-400/20 bg-gradient-to-br from-blue-500/[0.12] via-surface to-surface px-3 py-2 transition-all hover:border-blue-400/35 hover:from-blue-500/[0.16]">
-        <div className="absolute -right-5 -top-6 h-14 w-14 rounded-full bg-blue-500/10 blur-2xl" />
-        <div className="relative flex items-center gap-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-blue-400/10 text-blue-300 ring-1 ring-blue-400/20">
-            <Key className="h-3.5 w-3.5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-medium text-foreground">TickFlow</span>
-              <span
-                className="h-1.5 w-1.5 rounded-full"
-                style={{ ...t.dotStyle, ...(base === 'expert' ? { animation: 'pulse 2s infinite' } : {}) }}
-              />
-            </div>
-            <div className="mt-0.5 truncate text-[10px] leading-tight text-muted">
-              {isNone && !hasKey ? '配置 Key 解锁更多能力' : t.desc}
-            </div>
-          </div>
-          <span
-            className="inline-flex h-[18px] max-w-[68px] shrink-0 items-center overflow-hidden rounded px-1.5 text-[10px] font-bold font-mono leading-none"
-            style={t.tagBg}
-          >
-            <span className="truncate" style={t.labelTextStyle}>{displayLabel}</span>
-          </span>
-          <Settings className="h-3 w-3 shrink-0 text-muted group-hover:text-blue-300 transition-colors" />
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={NEON} strokeWidth="2" strokeLinecap="square" style={{ flex: 'none' }}>
+        <path d="M3 17l5.5-6 4 3.5L21 6" />
+      </svg>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1, flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 700, color: TXT_TITLE, letterSpacing: 1 }}>
+          TICKFLOW
+          {hasKey && (
+            <span
+              className="animate-pulse"
+              style={{ width: 5, height: 5, background: NEON, boxShadow: '0 0 6px rgba(213,240,33,.8)' }}
+            />
+          )}
         </div>
-
+        <div style={{ fontFamily: MONO, fontSize: 8.5, color: TXT_WEAK, letterSpacing: .5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{desc}</div>
       </div>
+      <span
+        className="shrink-0"
+        style={{
+          fontFamily: MONO, fontSize: 9, fontWeight: 700, color: NEON,
+          border: '1px solid rgba(213,240,33,.5)', padding: '1px 6px',
+          maxWidth: 68, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}
+      >
+        {displayLabel}
+      </span>
+      <Settings className="h-[13px] w-[13px] shrink-0 text-[#6a6754] group-hover:text-[#d5f021] transition-colors" />
     </NavLink>
   )
 }
 
+// ===== AI 配置入口卡 — 青描边切角块 =====
 function AIConfigBadge({ configured, model }: { configured?: boolean; model?: string }) {
   return (
     <NavLink
       to="/settings?tab=ai"
-      className="mt-2 group block -mx-2.5"
       title="AI 配置"
+      className="group block"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px',
+        border: '1px solid rgba(94,242,228,.3)', background: 'rgba(94,242,228,.03)',
+        clipPath: clipBR(9), textDecoration: 'none',
+      }}
     >
-      <div className="relative overflow-hidden rounded-lg border border-purple-400/20 bg-gradient-to-br from-purple-500/[0.12] via-surface to-surface px-3 py-2 transition-all hover:border-purple-400/35 hover:from-purple-500/[0.16]">
-        <div className="absolute -right-5 -top-6 h-14 w-14 rounded-full bg-purple-500/10 blur-2xl" />
-        <div className="relative flex items-center gap-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-purple-400/10 text-purple-300 ring-1 ring-purple-400/20">
-            <Sparkles className="h-3.5 w-3.5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-medium text-foreground">AI 配置</span>
-              <span className={`h-1.5 w-1.5 rounded-full ${configured ? 'bg-success' : 'bg-warning'}`} />
-            </div>
-            <div className="mt-0.5 truncate text-[10px] leading-tight text-muted">
-              {configured ? (model || '已接入模型') : '接入策略生成模型'}
-            </div>
-          </div>
-          <Settings className="h-3 w-3 text-muted group-hover:text-purple-300 transition-colors" />
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={UP} strokeWidth="1.8" strokeLinecap="square" style={{ flex: 'none' }}>
+        <path d="M12 3c.5 4.5 3 7 7 7.5-4 .5-6.5 3-7 7.5-.5-4.5-3-7-7-7.5 4-.5 6.5-3 7-7.5z" />
+      </svg>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1, flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 700, color: '#c9e8e4', letterSpacing: 1 }}>
+          AI 配置
+          <span style={{ width: 5, height: 5, background: configured ? NEON : GOLD }} />
+        </div>
+        <div style={{ fontFamily: MONO, fontSize: 8.5, color: TXT_WEAK, letterSpacing: .5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {configured ? (model || '已接入模型') : '接入策略生成模型'}
         </div>
       </div>
+      <Settings className="h-[13px] w-[13px] shrink-0 text-[#6a6754] group-hover:text-[#5ef2e4] transition-colors" />
     </NavLink>
   )
 }
@@ -269,7 +291,7 @@ export function Layout() {
   })
   const isDataSyncing = !!pipelineJobs?.active_id
 
-  // 数据同步完成的"瞬时反馈": isDataSyncing 从 true→false 时显示绿色对勾,
+  // 数据同步完成的"瞬时反馈": isDataSyncing 从 true→false 时显示对勾,
   // 闪烁约 3 秒后自动消失。
   const [dataSyncJustDone, setDataSyncJustDone] = useState(false)
   const prevSyncingRef = useRef(false)
@@ -368,75 +390,120 @@ export function Layout() {
     }
   }
 
+  const quoteDotStyle = realtimeEnabled && isRunning && isTrading
+    ? { background: NEON, boxShadow: '0 0 8px rgba(213,240,33,.8)' }
+    : realtimeEnabled
+      ? { background: GOLD }
+      : { background: '#6a6754' }
+
   return (
-    <div className="h-screen grid grid-cols-[14rem_1fr] bg-base text-foreground overflow-hidden">
-      <aside className="border-r border-border bg-surface flex flex-col h-full min-h-0 overflow-hidden">
-        <div className="px-5 py-5 border-b border-border shrink-0">
-          {/* Brand block — 原创 logo + 等宽 wordmark */}
-          <div className="flex items-center gap-2.5">
-            <Logo
-              size={28}
-              className="shrink-0 drop-shadow-[0_0_8px_rgba(139,92,246,0.5)]"
-              style={{ color: BRAND }}
-            />
+    <div
+      className="h-screen grid grid-cols-[244px_1fr] text-foreground overflow-hidden"
+      style={{ background: PAGE_BG, position: 'relative' }}
+    >
+      {/* 全页背景点阵 */}
+      <div
+        style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0,
+          backgroundImage: 'radial-gradient(rgba(213,240,33,.3) 1.1px,transparent 1.8px)',
+          backgroundSize: '72px 66px', backgroundPosition: '30px 26px',
+        }}
+      />
+      {/* 扫描光: 90px 微黄横带 9s 从上往下循环 */}
+      <div
+        className="cpfx"
+        style={{
+          position: 'absolute', left: 0, right: 0, height: 90, pointerEvents: 'none', zIndex: 29,
+          background: 'linear-gradient(180deg,transparent,rgba(213,240,33,.03),transparent)',
+          animation: 'cpScan 9s linear infinite',
+        }}
+      />
+      {/* 主区右缘装饰边 */}
+      <EdgeDeco side="main" />
+
+      <aside
+        className="flex h-full min-h-0 flex-col overflow-hidden"
+        style={{ background: '#0d0b07', padding: '16px 22px 12px 14px', position: 'relative', zIndex: 2 }}
+      >
+        {/* 侧边栏右缘装饰边 */}
+        <EdgeDeco side="sidebar" />
+
+        {/* ===== 品牌区: 黄色切角闪电 logo + ALPHAFLOW ===== */}
+        <div className="shrink-0">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '2px 2px' }}>
             <div
-              className="font-mono font-bold text-[13px] tracking-[0.06em] text-foreground leading-tight"
-              style={{ textShadow: `0 0 10px ${BRAND}44` }}
+              style={{
+                width: 38, height: 38, flex: 'none', background: NEON,
+                clipPath: 'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
             >
-              <div>Tickflow</div>
-              <div>US · Crypto</div>
+              <BoltGlyph size={20} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 1, fontSize: 18, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase' }}>
+                <span style={{ color: TXT_TITLE }}>Alpha</span>
+                <span style={{ color: NEON, textShadow: '0 0 10px rgba(213,240,33,.6)' }}>Flow</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, color: INK, background: NEON, padding: '1px 5px', letterSpacing: 1 }}>US</span>
+                <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, color: UP, border: '1px solid rgba(94,242,228,.5)', padding: '0 5px', letterSpacing: 1 }}>CRYPTO</span>
+              </div>
             </div>
           </div>
-
-          <div className="mt-2.5 text-[10px] uppercase tracking-[0.22em] text-secondary">
-            Quant · Terminal
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '12px 2px 0' }}>
+            <span style={{ height: 2, flex: 1, background: 'linear-gradient(90deg,#d5f021,transparent)' }} />
+            <span style={{ fontFamily: MONO, fontSize: 8.5, letterSpacing: 3.5, color: TXT_WEAK, whiteSpace: 'nowrap' }}>QUANT TERMINAL</span>
           </div>
+          <div style={{ height: 1, background: 'rgba(213,240,33,.14)', margin: '13px 0' }} />
 
-          <div
-            className="mt-3 h-px"
-            style={{ background: `linear-gradient(90deg, ${BRAND}88, transparent 80%)` }}
-          />
-
-          <TierBadge
-            label={caps?.label ?? ''}
-            hasKey={settingsState?.mode !== 'none'}
-          />
-          <AIConfigBadge
-            configured={settingsState?.ai_configured ?? settingsState?.has_ai_key}
-            model={settingsState?.ai_model}
-          />
+          {/* ===== 入口卡 ×2 ===== */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+            <TierBadge
+              label={caps?.label ?? ''}
+              hasKey={settingsState?.mode !== 'none'}
+            />
+            <AIConfigBadge
+              configured={settingsState?.ai_configured ?? settingsState?.has_ai_key}
+              model={settingsState?.ai_model}
+            />
+          </div>
         </div>
 
-        <nav className="flex-1 min-h-0 overflow-y-auto px-2 py-3 space-y-0.5">
+        {/* ===== 主导航 ===== */}
+        <nav
+          className="flex-1 min-h-0 overflow-y-auto"
+          style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 15, paddingBottom: 8 }}
+        >
           {visibleNavItems.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-3 px-3 py-2 rounded-btn text-sm transition-colors duration-150 ease-smooth',
-                  isActive
-                    ? 'bg-elevated text-foreground font-medium'
-                    : 'text-foreground/80 hover:bg-elevated hover:text-foreground',
-                )
-              }
+              className={({ isActive }) => cn('dash-nav', isActive && 'dash-nav-active')}
+              style={({ isActive }) => ({
+                display: 'flex', alignItems: 'center', gap: 11, padding: '8px 11px',
+                fontSize: 13.5, letterSpacing: 1, textDecoration: 'none',
+                ...(isActive
+                  ? {
+                      fontWeight: 700, color: INK, background: NEON,
+                      clipPath: clipBR(8),
+                      boxShadow: '0 0 22px rgba(213,240,33,.25)',
+                    }
+                  : { fontWeight: 600, color: TXT_WEAK }),
+              })}
             >
               {({ isActive }) => (
                 <>
-                  <Icon className="h-4 w-4 shrink-0" />
+                  <Icon className="h-[15px] w-[15px] shrink-0" />
                   <span className="flex-1">{label}</span>
-                  {/* 个股分析 Beta 标识 */}
-                  {(to === '/stock-analysis' || to === '/review') && (
-                    <span className="inline-flex items-center rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-400 shrink-0">
-                      Beta
-                    </span>
-                  )}
-                  {/* 数据同步状态: 同步中转圈, 刚完成显示绿色对勾闪烁 3 秒 */}
+                  {/* 个股分析 / 复盘 Beta 标识 */}
+                  {(to === '/stock-analysis' || to === '/review') && <BetaBadge active={isActive} />}
+                  {/* 数据同步状态: 同步中转圈, 刚完成显示对勾闪烁 3 秒 */}
                   {to === '/data' && isDataSyncing && (
-                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-accent" />
+                    <Loader2 className={cn('h-3.5 w-3.5 shrink-0 animate-spin', isActive ? 'text-[#0d0b07]' : 'text-[#d5f021]')} />
                   )}
                   {to === '/data' && !isDataSyncing && dataSyncJustDone && (
-                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success animate-pulse" />
+                    <CheckCircle2 className={cn('h-3.5 w-3.5 shrink-0 animate-pulse', isActive ? 'text-[#0d0b07]' : 'text-[#d5f021]')} />
                   )}
                   {/* 监控中心徽标: 仅非监控页且有未读时显示 */}
                   {to === '/monitor' && <MonitorBadge active={isActive} />}
@@ -446,23 +513,35 @@ export function Layout() {
           ))}
         </nav>
 
-        {/* 全局行情开关 */}
-        <div className="border-t border-border px-3 py-2.5 shrink-0">
+        {/* ===== 底部机读装饰(设计稿 RX 读数 + CUSTOM GLITCHES 微文) ===== */}
+        <div className="shrink-0" style={{ display: 'flex', alignItems: 'stretch', gap: 7, padding: '0 2px 7px' }}>
+          <span style={{ width: 1, background: 'rgba(213,240,33,.45)' }} />
+          <div style={{ fontFamily: MONO, fontSize: 8, fontWeight: 500, color: 'rgba(213,240,33,.75)', lineHeight: 1.65, letterSpacing: 1 }}>
+            <span style={{ background: 'rgba(213,240,33,.2)', padding: '0 3px' }}>▤</span> RX 4<br />43.<br />R0. PX V
+          </div>
+          <div style={{ flex: 1, fontFamily: MONO, fontSize: 7.5, color: '#4a4738', lineHeight: 1.7, letterSpacing: .5, alignSelf: 'flex-end' }}>
+            CUSTOM GLITCHES ON UI MAY APPEAR.<br />TYPE: CYBERSPACE // DOC/0/QUANT
+          </div>
+        </div>
+
+        {/* ===== 全局行情开关 ===== */}
+        <div className="shrink-0" style={{ borderTop: '1px solid rgba(213,240,33,.14)', padding: '8px 4px' }}>
           {isNoneTier ? (
             <div>
               <div className="flex items-center justify-between">
-                <span className="text-xs text-secondary truncate">实时行情</span>
-                <span className="text-[10px] text-accent/70 font-medium bg-accent/10 px-1.5 py-0.5 rounded">
-                  Free+
+                <span style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: 1, color: TXT_WEAK }}>实时行情</span>
+                <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, color: NEON, border: '1px solid rgba(213,240,33,.4)', padding: '1px 6px', letterSpacing: 1 }}>
+                  FREE+
                 </span>
               </div>
-              <div className="mt-1.5 text-[10px] leading-snug text-muted">
+              <div className="mt-1.5 text-[10px] leading-snug" style={{ color: TXT_WEAK }}>
                 免费注册
                 <a
                   href={TICKFLOW_REGISTER_URL}
                   target="_blank"
                   rel="noreferrer"
-                  className="mx-1 inline-flex items-baseline gap-0.5 text-accent/80 hover:text-accent hover:underline"
+                  className="mx-1 inline-flex items-baseline gap-0.5 hover:underline"
+                  style={{ color: NEON }}
                 >
                   TickFlow
                   <ExternalLink className="h-2.5 w-2.5 self-center" />
@@ -471,50 +550,56 @@ export function Layout() {
               </div>
             </div>
           ) : (
-            /* Starter+ — 开关 + 跳转设置 */
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className={`inline-block h-1.5 w-1.5 rounded-full shrink-0 ${
-                  realtimeEnabled && isRunning && isTrading
-                    ? 'bg-accent animate-pulse'
-                    : realtimeEnabled
-                      ? 'bg-warning/60'
-                      : 'bg-muted'
-                }`} />
-                <span className="text-xs text-secondary truncate">
-                  实时行情 · {realtimeModeLabel}
-                </span>
-                <button
-                  onClick={() => navigate('/settings?tab=monitoring')}
-                  className="text-secondary hover:text-foreground transition-colors shrink-0"
-                  title="实时监控设置"
-                >
-                  <Settings className="h-3 w-3" />
-                </button>
-              </div>
+            /* Free+ — 开关 + 跳转设置 */
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span
+                className="cpfx"
+                style={{
+                  width: 7, height: 7, flex: 'none', ...quoteDotStyle,
+                  ...(realtimeEnabled && isRunning && isTrading ? { animation: 'cpBlink 1.6s steps(1) infinite' } : {}),
+                }}
+              />
+              <span style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: 1, color: TXT_WEAK, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                实时行情 · {realtimeModeLabel}
+              </span>
+              <button
+                onClick={() => navigate('/settings?tab=monitoring')}
+                className="shrink-0 text-[#6a6754] hover:text-[#b8b4a0] transition-colors"
+                title="实时监控设置"
+              >
+                <Settings className="h-3 w-3" />
+              </button>
               <button
                 onClick={() => handleToggle(!realtimeEnabled)}
                 disabled={toggleQuote.isPending}
-                className={`relative inline-flex h-4 w-7 items-center rounded-full shrink-0 transition-colors duration-200 ${
-                  realtimeEnabled
-                    ? 'bg-accent shadow-[0_0_6px_rgba(59,130,246,0.3)]'
-                    : 'bg-elevated'
-                } ${toggleQuote.isPending ? 'opacity-50' : 'cursor-pointer'}`}
+                style={{
+                  width: 32, height: 17, flex: 'none', position: 'relative',
+                  background: realtimeEnabled ? 'rgba(213,240,33,.2)' : 'rgba(232,230,216,.07)',
+                  border: `1px solid ${realtimeEnabled ? 'rgba(213,240,33,.5)' : 'rgba(232,230,216,.18)'}`,
+                  cursor: toggleQuote.isPending ? 'default' : 'pointer',
+                  opacity: toggleQuote.isPending ? 0.5 : 1,
+                }}
               >
-                <span className={`inline-block h-3 w-3 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                  realtimeEnabled ? 'translate-x-[14px]' : 'translate-x-0.5'
-                }`} />
+                <span
+                  style={{
+                    position: 'absolute', top: 2, width: 11, height: 11,
+                    left: realtimeEnabled ? 17 : 2,
+                    background: realtimeEnabled ? NEON : '#6a6754',
+                    boxShadow: realtimeEnabled ? '0 0 6px rgba(213,240,33,.6)' : 'none',
+                    transition: 'left .2s, background .2s',
+                  }}
+                />
               </button>
             </div>
           )}
 
           {/* 状态提示 */}
           {realtimeEnabled && !isNoneTier && (
-            <div className="mt-1.5 text-[10px] leading-snug">
+            <div className="mt-1.5 text-[10px] leading-snug" style={{ fontFamily: MONO }}>
               {isRunning && isTrading ? (
-                <span className="text-accent">行情运行中</span>
+                <span style={{ color: NEON }}>{'// 行情运行中'}</span>
               ) : realtimeEnabled && !isTrading ? (
-                <span className="text-warning/70">美股非交易时段（加密行情持续拉取）</span>
+                <span className="text-warning/80">{'// 美股非交易时段(加密持续拉取)'}</span>
               ) : null}
             </div>
           )}
@@ -523,23 +608,20 @@ export function Layout() {
           )}
         </div>
 
-        <div className="border-t border-border px-2 py-3 space-y-0.5 shrink-0">
+        {/* ===== 设置 + 版本号 ===== */}
+        <div className="shrink-0" style={{ borderTop: '1px solid rgba(213,240,33,.14)', padding: '6px 0 0' }}>
           <NavLink
             to="/settings"
-            className={({ isActive }) =>
-              cn(
-                'flex items-center justify-between gap-3 px-3 py-2 rounded-btn text-sm transition-colors duration-150 ease-smooth',
-                isActive
-                  ? 'bg-elevated text-foreground font-medium'
-                  : 'text-foreground/80 hover:bg-elevated hover:text-foreground',
-              )
-            }
+            className={({ isActive }) => cn('dash-nav', isActive && 'dash-nav-active')}
+            style={({ isActive }) => ({
+              display: 'flex', alignItems: 'center', gap: 10, padding: '7px 6px',
+              fontSize: 13, letterSpacing: 1, textDecoration: 'none',
+              color: isActive ? NEON : TXT_WEAK, fontWeight: 600,
+            })}
           >
-            <span className="flex items-center gap-3">
-              <Settings className="h-4 w-4 shrink-0" />
-              <span>设置</span>
-            </span>
-            <span className="font-mono text-[10px] text-muted/50 select-none">
+            <Settings className="h-[15px] w-[15px] shrink-0" />
+            <span className="flex-1">设置</span>
+            <span className="select-none" style={{ fontSize: 9.5, color: '#4a4738', fontFamily: MONO }}>
               {version ?? ''}
             </span>
           </NavLink>
@@ -551,6 +633,7 @@ export function Layout() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
         className="h-full overflow-auto scrollbar-gutter-stable"
+        style={{ position: 'relative', zIndex: 1 }}
       >
         <Outlet />
       </motion.main>
