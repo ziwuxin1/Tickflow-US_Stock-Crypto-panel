@@ -54,6 +54,34 @@ def test_missing_price_leaves_mv_none():
     out = summarize_positions(trades, {})
     pos = out["positions"][0]
     assert pos["market_value"] is None and pos["unrealized_pnl"] is None
+    # 无行情持仓不计入汇总(总市值/总成本/浮动均排除), 保持三者口径一致
+    assert out["totals"]["market_value"] == 0
+    assert out["totals"]["cost_basis"] == 0
+    assert out["totals"]["unrealized_pnl"] == 0
+
+
+def test_totals_only_count_priced_positions():
+    """混合有行情/无行情: 汇总仅统计有行情仓, 无行情仓仅在明细体现。"""
+    trades = [_t("AAPL.US", "buy", 100, 10, "2026-01-05"),
+              _t("FUND.US", "buy", 50, 20, "2026-01-05")]
+    out = summarize_positions(trades, {"AAPL.US": {"close": 120.0, "prev_close": 120.0}})
+    assert out["totals"]["market_value"] == pytest.approx(1200)
+    assert out["totals"]["cost_basis"] == pytest.approx(1000)  # 不含 FUND 的 1000
+    assert out["totals"]["unrealized_pnl"] == pytest.approx(200)
+    assert len(out["positions"]) == 2  # FUND 仍在明细中
+
+
+def test_equity_curve_excludes_unpriced_holding():
+    """无行情持仓不进曲线成本, pnl 不出现假性断崖。"""
+    trades = [_t("AAPL.US", "buy", 100, 10, "2026-01-05"),
+              _t("FUND.US", "buy", 50, 100, "2026-01-06")]
+    closes = {"AAPL.US": {"2026-01-05": 100.0, "2026-01-06": 100.0}}  # FUND 无任何收盘价
+    curve = build_equity_curve(trades, closes, end_date="2026-01-06")
+    last = curve[-1]
+    # FUND(成本 5000)不计入 → 市值/成本仅 AAPL, pnl 稳定在 0 附近, 无 -5000 断崖
+    assert last["market_value"] == pytest.approx(1000)
+    assert last["cost_basis"] == pytest.approx(1000)
+    assert last["pnl"] == pytest.approx(0)
 
 
 def test_oversell_rejected_with_context():

@@ -121,7 +121,7 @@ export function Portfolio() {
 
   const summary = useQuery({ queryKey: ['portfolio', 'summary'], queryFn: portfolioApi.summary, refetchInterval: 30_000 })
   const tradesQ = useQuery({ queryKey: ['portfolio', 'trades'], queryFn: portfolioApi.trades })
-  const curveQ = useQuery({ queryKey: ['portfolio', 'curve'], queryFn: portfolioApi.equityCurve })
+  const curveQ = useQuery({ queryKey: ['portfolio', 'curve'], queryFn: portfolioApi.equityCurve, refetchInterval: 60_000 })
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['portfolio'] })
   const delMut = useMutation({ mutationFn: portfolioApi.deleteTrade, onSuccess: invalidate })

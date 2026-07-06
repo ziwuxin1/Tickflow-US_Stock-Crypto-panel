@@ -111,9 +111,11 @@ def summarize_positions(trades: list[dict], prices: dict[str, dict]) -> dict:
             "unrealized_pct": (close / p["avg_cost"] - 1) * 100 if close and p["avg_cost"] > _EPS else None,
             "today_pnl": tpnl, "realized_pnl": p["realized_pnl"], "fees": p["fees"],
         })
-        totals["cost_basis"] += cost
+        # 无行情持仓(如共同基金 FSPTX)不计入总市值/总成本/浮动, 保持三者口径一致,
+        # 避免"总成本含该仓、总市值不含"导致汇总与曲线出现假性巨亏。仍在明细中展示。
         if mv is not None:
             totals["market_value"] += mv
+            totals["cost_basis"] += cost
             totals["unrealized_pnl"] += upnl
         if tpnl is not None:
             totals["today_pnl"] += tpnl
@@ -161,9 +163,11 @@ def build_equity_curve(trades: list[dict], closes: dict[str, dict[str, float]],
             if c is not None:
                 last_close[s] = c
             c = last_close.get(s)
+            # 仅对有行情的持仓同时累计市值与成本, 无行情仓(如共同基金)两者都不计,
+            # 使 pnl = mv − cost + realized 口径自洽, 曲线不会因无行情仓出现假性断崖。
             if c is not None:
                 mv += q * c
-            cost += q * avg.get(s, 0.0)
+                cost += q * avg.get(s, 0.0)
         out.append({"date": ds, "market_value": mv, "cost_basis": cost,
                     "pnl": mv - cost + realized})
         d += timedelta(days=1)
