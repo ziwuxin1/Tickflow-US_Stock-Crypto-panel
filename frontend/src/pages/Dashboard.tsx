@@ -18,6 +18,7 @@ import { LeaderboardCard } from '@/components/dashboard/LeaderboardCard'
 import { MarketTickerCards } from '@/components/dashboard/MarketTickerCards'
 import { MonitorCenterCard } from '@/components/dashboard/MonitorCenterCard'
 import { PortfolioCard } from '@/components/dashboard/PortfolioCard'
+import { PortfolioAllocationCard } from '@/components/dashboard/PortfolioAllocationCard'
 import { RadarCard } from '@/components/dashboard/RadarCard'
 import { StatCards } from '@/components/dashboard/StatCards'
 import { TrendMonitorCard } from '@/components/dashboard/TrendMonitorCard'
@@ -147,7 +148,7 @@ export function Dashboard() {
   const quoteMode = data.quote_status?.mode as ('none' | 'watchlist' | 'full_market') | undefined
 
   return (
-    <div style={{ minWidth: 1580, minHeight: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ minWidth: 1680, minHeight: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       {/* ===== NET_TECH 顶栏 ===== */}
       <CpTopBar protocol="MARKET DASHBOARD PROTOCOL // FULL-SPECTRUM SCAN" live={!!quoteRunning} />
 
@@ -250,9 +251,10 @@ export function Dashboard() {
         {/* ===== 市场统计卡 ×6 ===== */}
         <StatCards data={data} />
 
-        {/* ===== 中部四栏: 大盘基准图表 | 情绪雷达 | 趋势/监控 perk | 加密快照+监控中心 ===== */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr .85fr 1.2fr .8fr', gap: 14, alignItems: 'stretch', position: 'relative' }}>
+        {/* ===== 中部五栏: 大盘基准图表(收窄) | 持仓分布环形 | 情绪雷达 | 趋势/监控 perk | 加密快照+监控中心 ===== */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr .66fr .82fr 1.05fr .8fr', gap: 14, alignItems: 'stretch', position: 'relative' }}>
           <BalanceChart />
+          <PortfolioAllocationCard />
           <RadarCard radar={data.radar} score={score} />
           <TrendMonitorCard data={data} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
