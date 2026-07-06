@@ -169,6 +169,9 @@ function CardTitle({ title, en, right }: { title: string; en: string; right?: Re
 const HEAD: React.CSSProperties = { fontSize: 10.5, fontWeight: 700, color: 'rgba(213,240,33,.8)', letterSpacing: 1.5 }
 const cellR: React.CSSProperties = { fontFamily: MONO, fontSize: 12, textAlign: 'right' }
 
+const RANGES = ['1M', '3M', '6M', '1Y', 'MAX'] as const
+const RANGE_DAYS: Record<string, number> = { '1M': 30, '3M': 90, '6M': 180, '1Y': 365 }
+
 export function Portfolio() {
   const qc = useQueryClient()
   const navigate = useNavigate()
@@ -191,6 +194,16 @@ export function Portfolio() {
     if (!totals) return null
     return (totals.unrealized_pnl ?? 0) + (totals.realized_pnl ?? 0)
   }, [totals])
+
+  const [range, setRange] = useState<(typeof RANGES)[number]>('6M')
+  const shownCurve = useMemo(() => {
+    if (range === 'MAX' || curve.length === 0) return curve
+    const last = new Date(curve[curve.length - 1].date)
+    const cutoff = new Date(last)
+    cutoff.setDate(cutoff.getDate() - RANGE_DAYS[range])
+    const cutoffStr = cutoff.toISOString().slice(0, 10)
+    return curve.filter(p => p.date >= cutoffStr)
+  }, [curve, range])
 
   return (
     <div style={{ minWidth: 1180, minHeight: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -237,8 +250,26 @@ export function Portfolio() {
               </span>
             )}
           />
-          <div style={{ padding: '16px 16px 12px' }}>
-            <EquityChart curve={curve} />
+          <div style={{ padding: '12px 16px 12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+              <div style={{ display: 'flex', border: '1px solid rgba(213,240,33,.4)' }}>
+                {RANGES.map(t => (
+                  <span
+                    key={t}
+                    onClick={() => setRange(t)}
+                    style={{
+                      fontFamily: MONO, fontSize: 9, fontWeight: 700, letterSpacing: 1,
+                      padding: '4px 11px', cursor: 'pointer',
+                      background: t === range ? NEON : 'transparent',
+                      color: t === range ? INK : NEON,
+                    }}
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <EquityChart curve={shownCurve} />
           </div>
         </section>
           <PortfolioAllocationCard />
