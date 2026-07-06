@@ -161,6 +161,54 @@ export interface AiStockReport {
   created_at: string
 }
 
+// ===== AI 自动预测(结构化点位) =====
+export interface PredictPoint {
+  price: number
+  note: string
+}
+
+export interface DatedPoint {
+  date: string
+  price: number
+  label?: string
+}
+
+/** AI 识别的形态结构: 三角区上下轨 / 未来价格路径 / 波浪拐点 */
+export interface AiPatterns {
+  triangle: { upper: DatedPoint[]; lower: DatedPoint[] } | null
+  forecast_path: { days_ahead: number; price: number }[] | null
+  waves: DatedPoint[] | null
+}
+
+export interface StockPrediction {
+  stance: '看多' | '看空' | '中性'
+  one_liner: string
+  confidence: number | null
+  signals: { macd: string; rsi: string; kdj: string; boll: string }
+  levels: {
+    entry: PredictPoint[]
+    exit: PredictPoint[]
+    stop_loss: PredictPoint | null
+    breakout: PredictPoint | null
+    rebound_target: PredictPoint | null
+    pullback_watch: PredictPoint | null
+    support_zone: { low: number; high: number } | null
+    breakdown_target: PredictPoint | null
+  }
+  patterns?: AiPatterns
+  risks: string[]
+  opportunities: string[]
+  advice: { holding: string; no_position: string }
+}
+
+export interface PredictResponse {
+  prediction: StockPrediction
+  /** 研究报告全文(global-stock-data 技能输出, 已剥离结构化 JSON 块) */
+  report?: string
+  close: number | null
+  generated_at: string
+}
+
 // ===== Kline =====
 export interface MinuteKlineRow {
   datetime: string
@@ -1331,6 +1379,13 @@ export const api = {
   stockAnalysisLevels: (symbol: string, days = 120) =>
     request<StockLevels>(`/api/stock-analysis/levels?symbol=${encodeURIComponent(symbol)}&days=${days}`),
 
+  /** AI 自动预测: 经本机 Claude Code CLI 跑 global-stock-data 技能(耗时数分钟) */
+  stockPredict: (symbol: string, name = '') =>
+    request<PredictResponse>('/api/stock-analysis/predict', {
+      method: 'POST',
+      body: JSON.stringify({ symbol, name }),
+    }),
+
   stockAnalysisReportsList: () =>
     request<{ reports: AiStockReport[] }>('/api/stock-analysis/reports'),
 
@@ -1751,4 +1806,37 @@ export interface AnalysisMenu {
   created_at?: string | null
   updated_at?: string | null
   builtin?: boolean
+}
+
+// ===== Portfolio =====
+export interface PortfolioTrade {
+  id: string; symbol: string; side: 'buy' | 'sell'
+  price: number; qty: number; fee: number; traded_at: string; note: string
+}
+export interface PortfolioPosition {
+  symbol: string; name: string | null; qty: number; avg_cost: number
+  close: number | null; market_value: number | null; cost_basis: number
+  unrealized_pnl: number | null; unrealized_pct: number | null
+  today_pnl: number | null; realized_pnl: number; fees: number
+}
+export interface PortfolioSummary {
+  positions: PortfolioPosition[]
+  totals: {
+    market_value: number; cost_basis: number; unrealized_pnl: number
+    realized_pnl: number; today_pnl: number; fees: number
+  }
+}
+export interface EquityPoint { date: string; market_value: number; cost_basis: number; pnl: number }
+export type PortfolioTradeIn = Omit<PortfolioTrade, 'id'>
+
+export const portfolioApi = {
+  trades: () => request<{ trades: PortfolioTrade[] }>('/api/portfolio/trades'),
+  addTrade: (t: PortfolioTradeIn) =>
+    request<{ status: string }>('/api/portfolio/trades', { method: 'POST', body: JSON.stringify(t) }),
+  updateTrade: (id: string, t: PortfolioTradeIn) =>
+    request<{ status: string }>(`/api/portfolio/trades/${id}`, { method: 'PUT', body: JSON.stringify(t) }),
+  deleteTrade: (id: string) =>
+    request<{ status: string }>(`/api/portfolio/trades/${id}`, { method: 'DELETE' }),
+  summary: () => request<PortfolioSummary>('/api/portfolio/summary'),
+  equityCurve: () => request<{ curve: EquityPoint[] }>('/api/portfolio/equity_curve'),
 }
