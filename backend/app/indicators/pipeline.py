@@ -579,6 +579,7 @@ def _select_storage_cols(df: pl.DataFrame) -> pl.DataFrame:
 def run_pipeline(data_dir: Path | None = None,
                  symbols: list[str] | None = None,
                  new_dates_only: bool = False,
+                 dates: list[str] | None = None,
                  on_batch_done: Callable[[int, int], None] | None = None) -> int:
     """运行盘后管道:读 kline_daily + adj_factor → 前复权 + 计算存储列 → 写 enriched。
 
@@ -591,6 +592,8 @@ def run_pipeline(data_dir: Path | None = None,
       - 向后增量 (new_dates_only=True):
           只读 enriched 中尚不存在的日期分区对应的 daily 数据,
           为所有标的生成新的 enriched 分区;
+          传 dates 时改用显式日期列表(混合存储下加密 7x24 会先建好当天分区,
+          美股回补进"已存在分区"时分区差集看不到, 需由调用方按内容判定后指定);
           若同时传 symbols, 还会对这些个股的全部已有日期做重算
           (因为除权因子链变了,历史数据的复权比例也要更新)。
       - 除权因子增量 (symbols 指定, new_dates_only=False):
@@ -624,16 +627,21 @@ def run_pipeline(data_dir: Path | None = None,
 
     if new_dates_only:
         # ── 向后增量模式 ──
-        # 1. 找出 daily 有但 enriched 还没有的日期
-        enriched_dates = set()
-        if enriched_base.exists():
-            enriched_dates = {p.stem.split("=")[1] for p in enriched_base.glob("date=*")}
-
-        # 读新增日期的 daily 数据 (所有标的)
-        new_date_dirs = sorted(
-            p for p in daily_dir.glob("date=*")
-            if p.stem.split("=")[1] not in enriched_dates
-        )
+        # 1. 找出待重算日期: 显式 dates 优先, 否则 daily 有但 enriched 还没有的日期
+        if dates is not None:
+            want = set(dates)
+            new_date_dirs = sorted(
+                p for p in daily_dir.glob("date=*")
+                if p.stem.split("=")[1] in want
+            )
+        else:
+            enriched_dates = set()
+            if enriched_base.exists():
+                enriched_dates = {p.stem.split("=")[1] for p in enriched_base.glob("date=*")}
+            new_date_dirs = sorted(
+                p for p in daily_dir.glob("date=*")
+                if p.stem.split("=")[1] not in enriched_dates
+            )
         if not new_date_dirs and not symbols:
             logger.info("增量模式: 无新日期, 无需重算")
             return 0
@@ -652,6 +660,14 @@ def run_pipeline(data_dir: Path | None = None,
             # 读已有 enriched 最近 60 天作为历史前缀
             sym_list = raw_new["symbol"].unique().to_list()
             hist_df = _load_recent_history(enriched_base, sym_list, days=60)
+            # 显式 dates 模式会重算"已存在"的分区(如加密先建好的当天分区):
+            # 历史前缀须剔除待重算日期, 避免与 raw_new 出现重复 (symbol, date) 行。
+            # 分区差集模式下这些日期本就不在 enriched 中, 过滤为空操作。
+            if not hist_df.is_empty():
+                _recompute_ds = {p.stem.split("=")[1] for p in new_date_dirs}
+                hist_df = hist_df.filter(
+                    ~pl.col("date").cast(pl.Utf8).is_in(list(_recompute_ds))
+                )
 
             # 合并历史 + 新数据
             if not hist_df.is_empty():

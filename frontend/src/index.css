@@ -2,9 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
-/* === §6.0 设计语言 CSS variables ===
+/* === Cyberpunk 2077 主题(design_handoff_cyberpunk) CSS variables ===
  * 暗色为默认(html.dark) / 亮色用 :root 反转
  * HSL 形式以兼容 Tailwind alpha-value 语法
+ * 设计语言: 深黑底 #0b0908 + 酸性黄 #d5f021 · 青涨 #5ef2e4 / 红跌 #f75049 · 全直角
  */
 :root {
   /* 亮色(可切换) */
@@ -15,39 +16,49 @@
   --fg-primary: 240 6% 10%;  /* #18181B */
   --fg-secondary: 240 4% 35%;/* #52525B */
   --fg-muted: 240 5% 65%;    /* #A1A1AA */
-  --accent: 217 91% 60%;     /* #3B82F6 电光蓝 */
-  /* 美股/加密惯例：绿涨红跌 */
-  --bull: 152 67% 45%;       /* #12B76A 绿涨 */
-  --bear: 4 87% 60%;         /* #F04438 红跌 */
-  --success: 152 67% 45%;    /* #12B76A 成功态(与涨跌语义解耦) */
-  --warning: 32 95% 50%;     /* #F79009 */
-  --danger: 4 87% 60%;       /* #F04438 */
+  --accent: 174 60% 40%;     /* 青色(CP 信息色的亮色版) */
+  /* CP 主题涨跌语义: 青涨红跌 */
+  --bull: 174 60% 40%;
+  --bear: 2 76% 52%;
+  --success: 174 60% 40%;
+  --warning: 41 69% 52%;     /* #D9A531 */
+  --danger: 2 76% 52%;
+
+  /* 涨跌主题变量(供图表/光条/渐变直接引用) */
+  --up: #5ef2e4;
+  --down: #f75049;
+  --upTop: #8ff5e8;
+  --downTop: #f88a80;
+  --upSoft: rgba(94, 242, 228, .14);
+  --downSoft: rgba(247, 80, 73, .16);
 }
 
 html.dark {
-  --base: 240 5% 5%;         /* #0A0A0B */
-  --surface: 240 7% 10%;     /* #18181B 略亮一点,与 base 对比清晰 */
-  --elevated: 240 9% 14%;    /* #212126 */
-  --border: 240 5% 22%;      /* #353539 边框加亮,易识别 */
-  --fg-primary: 0 0% 98%;    /* #FAFAFA */
-  --fg-secondary: 240 5% 78%;/* #C4C4CB 大幅提亮 — 子标题/导航非激活态 */
-  --fg-muted: 240 5% 58%;    /* #8E8E96 muted 提亮 — 辅助提示 */
-  --accent: 217 91% 60%;
-  /* 美股/加密惯例：绿涨红跌 */
-  --bull: 152 67% 45%;
-  --bear: 4 87% 60%;
-  --success: 152 67% 45%;
-  --warning: 32 95% 50%;
-  --danger: 4 87% 60%;
+  --base: 20 16% 4%;         /* #0b0908 深黑底 */
+  --surface: 43 28% 5%;      /* #100e09 面板底 */
+  --elevated: 42 28% 7%;     /* #17140d 悬浮层/图标深底 */
+  --border: 48 29% 18%;      /* #3a3520 边框 */
+  --fg-primary: 53 26% 88%;  /* #e8e6d8 主文字 */
+  --fg-secondary: 50 14% 67%;/* #b8b4a0 次级文字 */
+  --fg-muted: 51 9% 52%;     /* #8f8c7a 辅助提示 */
+  --accent: 174 85% 66%;     /* #5ef2e4 青(信息) */
+  /* CP 主题涨跌语义: 青涨红跌 */
+  --bull: 174 85% 66%;       /* #5ef2e4 */
+  --bear: 2 92% 63%;         /* #f75049 */
+  --success: 174 85% 66%;
+  --warning: 41 69% 52%;     /* #d9a531 金色 */
+  --danger: 2 92% 63%;
 }
+
+::selection { background: rgba(213, 240, 33, .35); }
 
 /* 价格 / 数字一律等宽 */
 .scrollbar-gutter-stable { scrollbar-gutter: stable; }
 
-/* 全局滚动条 */
+/* 全局滚动条 — CP: 直角 + 暗黄砂色 */
 * {
   scrollbar-width: thin;
-  scrollbar-color: hsl(var(--border)) transparent;
+  scrollbar-color: #3a3520 transparent;
 }
 *::-webkit-scrollbar {
   width: 8px;
@@ -57,13 +68,13 @@ html.dark {
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background: hsl(var(--border) / 0.72);
+  background: #3a3520;
   border: 2px solid transparent;
-  border-radius: 999px;
+  border-radius: 0;
   background-clip: content-box;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--accent) / 0.75);
+  background: rgba(213, 240, 33, .55);
   background-clip: content-box;
 }
 .tabular { font-variant-numeric: tabular-nums; }
@@ -76,8 +87,124 @@ body {
   background: hsl(var(--base));
   color: hsl(var(--fg-primary));
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
-  /* 暗色模式不用 antialiased — 让字形保持饱满,不发虚 */
-  -webkit-font-smoothing: subpixel-antialiased;
-  -moz-osx-font-smoothing: auto;
+  -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* ===== Cyberpunk 动效 Keyframes(design_handoff_cyberpunk) ===== */
+
+/* LED 闪烁 */
+@keyframes cpBlink { 0%, 55% { opacity: 1 } 56%, 100% { opacity: 0 } }
+/* 标题位移抖动 glitch */
+@keyframes cpGlitch { 0%, 92%, 100% { transform: none; opacity: 1 } 93% { transform: translateX(2px); opacity: .6 } 95% { transform: translateX(-2px) } 97% { transform: none; opacity: .85 } }
+/* 扫描光: 90px 微黄横带从上往下循环 */
+@keyframes cpScan { 0% { transform: translateY(-100%) } 100% { transform: translateY(110vh) } }
+/* 红/青色散 text-shadow */
+@keyframes cpRGB { 0%, 86%, 100% { text-shadow: 0 0 16px rgba(213, 240, 33, .4) } 87% { text-shadow: 3px 0 #f75049, -3px 0 #5ef2e4, 0 0 16px rgba(213, 240, 33, .4) } 89% { text-shadow: -2px 0 #f75049, 2px 0 #5ef2e4 } 90% { text-shadow: 0 0 16px rgba(213, 240, 33, .4) } 94% { text-shadow: 2px 0 #f75049, -2px 0 #5ef2e4 } 95% { text-shadow: 0 0 16px rgba(213, 240, 33, .4) } }
+/* 黄色块错位 + inset 撕裂 */
+@keyframes cpBlockG { 0%, 92%, 100% { transform: none; opacity: 1 } 93% { transform: translateX(-3px) skewX(-1.5deg); opacity: .85 } 94% { transform: translateX(3px) } 95% { transform: none; opacity: .9; clip-path: inset(30% 0 20% 0) } 96% { transform: translateX(-2px); clip-path: none } 97% { transform: none; opacity: 1 } }
+/* 页面随机故障线 */
+@keyframes cpBarG { 0%, 94%, 100% { opacity: 0 } 95% { opacity: .75; transform: translateX(0) } 96% { opacity: .4; transform: translateX(-26px) } 97.5% { opacity: .85; transform: translateX(18px) } 99% { opacity: 0 } }
+/* 流光 */
+@keyframes cpSheen { 0% { transform: translateX(-130%) } 100% { transform: translateX(480%) } }
+/* 心电 dashoffset 流动 */
+@keyframes cpEcg { to { stroke-dashoffset: -240 } }
+/* 斜纹 GPU 无缝流动(位移恰好一周期 5px*2*sqrt(2)=14.142px) */
+@keyframes cpStripe { to { transform: translateX(14.142px) } }
+
+/* ===== 指数页动效(design_handoff_index_page): 分时端点涟漪/呼吸/辉光 ===== */
+@keyframes ripple { 0% { transform: scale(.35); opacity: .9 } 70% { opacity: .25 } 100% { transform: scale(3); opacity: 0 } }
+@keyframes dotPulse { 0%, 100% { transform: scale(1) } 50% { transform: scale(1.25) } }
+@keyframes glowPulse { 0%, 100% { opacity: .65 } 50% { opacity: 1 } }
+
+/* 指数页左栏列表项: 选中黄描边, hover 微亮 */
+.idx-list-item { background: transparent; border: 1px solid transparent; }
+.idx-list-item:hover { background: rgba(213, 240, 33, .05); }
+.idx-list-item[data-active] { background: rgba(213, 240, 33, .09); border-color: rgba(213, 240, 33, .28); }
+
+/* 跑马灯描边: hover 时双黄光带(相隔 180°)沿卡片边框环绕 */
+@property --mq { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@keyframes mqspin { to { --mq: 360deg } }
+[data-mq] { position: relative; }
+[data-mq]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(from var(--mq), transparent 0 6%, rgba(213, 240, 33, .15) 12%, #eefb8a 17%, #d5f021 20%, rgba(213, 240, 33, .15) 28%, transparent 34% 56%, rgba(213, 240, 33, .15) 62%, #eefb8a 67%, #d5f021 70%, rgba(213, 240, 33, .15) 78%, transparent 84%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity .3s;
+  pointer-events: none;
+  z-index: 2;
+}
+[data-mq]:hover::after { opacity: 1; animation: mqspin 2.4s linear infinite; }
+
+/* 侧边导航 hover(非激活项): 青色 1px 内描边 + 微青底 */
+.dash-nav { transition: background-color .15s, color .15s, box-shadow .15s; }
+.dash-nav:not(.dash-nav-active):hover {
+  background: rgba(94, 242, 228, .05);
+  color: #e8e6d8 !important;
+  box-shadow: inset 0 0 0 1px rgba(94, 242, 228, .85), 0 0 12px rgba(94, 242, 228, .18);
+}
+
+/* 看板刷新按钮 — 黄色实心切角块 */
+.dash-refresh {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #0d0b07;
+  background: #d5f021;
+  border: none;
+  border-radius: 0;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
+  padding: 8px 18px;
+  cursor: pointer;
+  transition: filter .15s;
+}
+.dash-refresh:hover { filter: brightness(1.08); }
+.dash-refresh:disabled { opacity: .55; cursor: default; }
+
+/* CP 实心黄按钮 hover 提亮 */
+.cp-btn-solid { transition: filter .15s; }
+.cp-btn-solid:hover { filter: brightness(1.08); }
+
+/* CP 表格行 hover: 微黄底 + 左侧青色光条(个股分析自选表) */
+.cp-row { transition: background-color .12s, box-shadow .12s; }
+.cp-row:hover { background: rgba(213, 240, 33, .06); box-shadow: inset 2px 0 0 #5ef2e4; }
+
+/* CP 榜单行 hover */
+.cp-hover-row { transition: background-color .12s; }
+.cp-hover-row:hover { background: rgba(213, 240, 33, .05); }
+
+/* ===== CP 自定义光标: 角括号瞄准框 + 中心块 ===== */
+/* 默认: 青色括号 + 黄色中心块; 可交互(pointer): 黄色括号 + 青色中心块 */
+:root {
+  --cp-cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cg fill='none' stroke='%235ef2e4' stroke-width='2'%3E%3Cpath d='M2 8V2h6'/%3E%3Cpath d='M16 2h6v6'/%3E%3Cpath d='M22 16v6h-6'/%3E%3Cpath d='M8 22H2v-6'/%3E%3C/g%3E%3Crect x='9' y='10.5' width='6' height='3' fill='%23d5f021'/%3E%3C/svg%3E") 12 12;
+  --cp-cursor-hot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cg fill='none' stroke='%23d5f021' stroke-width='2'%3E%3Cpath d='M2 8V2h6'/%3E%3Cpath d='M16 2h6v6'/%3E%3Cpath d='M22 16v6h-6'/%3E%3Cpath d='M8 22H2v-6'/%3E%3C/g%3E%3Crect x='9' y='10.5' width='6' height='3' fill='%235ef2e4'/%3E%3C/svg%3E") 12 12;
+}
+/* !important 以压过组件内联 cursor(pointer/crosshair 等), 全站统一 CP 光标 */
+* { cursor: var(--cp-cursor), auto !important; }
+a, button, select, label, summary,
+.cursor-pointer, .cp-row, .cp-hover-row, .dash-nav, .dash-refresh, .cp-btn-solid,
+[role='button'], [style*='cursor: pointer'], [style*='cursor:pointer'] {
+  cursor: var(--cp-cursor-hot), pointer !important;
+}
+/* 可交互元素的子节点也用黄框(内联样式只在自身, 子元素会回落到 *) */
+a *, button *, .cp-row *, .cp-hover-row *, .dash-nav *, .dash-refresh *, .cp-btn-solid *,
+[role='button'] *, [style*='cursor: pointer'] *, [style*='cursor:pointer'] * {
+  cursor: var(--cp-cursor-hot), pointer !important;
+}
+
+/* 减弱动效偏好: 停用全部 CP 装饰动效与跑马灯 */
+@media (prefers-reduced-motion: reduce) {
+  [data-mq]::after { animation: none !important; }
+  .cpfx, .cpfx * { animation: none !important; }
 }

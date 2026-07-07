@@ -60,6 +60,22 @@ def trading_date(asset: str = "stock") -> date:
     return crypto_trading_date() if asset == "crypto" else us_trading_date()
 
 
+def us_date_from_timestamp(ts: float | int | None) -> date | None:
+    """行情时间戳(秒或毫秒) → 美东日期。用于判定一条行情快照归属的交易日。
+
+    None/0/非法值返回 None。> 1e12 视为毫秒(TickFlow quote timestamp 为 ms)。
+    """
+    if not ts:
+        return None
+    try:
+        ts = float(ts)
+        if ts > 1e12:
+            ts /= 1000.0
+        return datetime.fromtimestamp(ts, tz=US_EASTERN).date()
+    except (OverflowError, OSError, ValueError, TypeError):
+        return None
+
+
 def is_us_trading_hours(now: datetime | None = None) -> bool:
     """是否处于美股常规交易时段: 美东周一~五 09:30-16:00。
 

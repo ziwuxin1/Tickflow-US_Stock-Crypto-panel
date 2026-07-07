@@ -1280,6 +1280,24 @@ class KlineRepository:
             return None
         return None
 
+    def latest_stock_enriched_date(self) -> date | None:
+        """本地美股 enriched 的最新日期(排除加密), 口径与 latest_stock_daily_date 一致。
+
+        用于盘后管道的内容级增量判定: 混合存储下加密 7x24 先建好当天分区,
+        美股日K回补进"已存在分区"时分区集合差集看不到, 需按内容比较美股最新日期。
+        """
+        try:
+            with self._lock:
+                res = self.db.execute(
+                    "SELECT max(date) FROM kline_enriched WHERE symbol LIKE '%.%'",
+                ).fetchone()
+            if res and res[0]:
+                d = res[0]
+                return d if isinstance(d, date) else date.fromisoformat(str(d))
+        except Exception:
+            return None
+        return None
+
     def latest_crypto_daily_date(self) -> date | None:
         """本地加密日K的最新日期(仅加密, 用于加密回补起点)。
 

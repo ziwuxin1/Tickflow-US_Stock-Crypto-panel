@@ -167,7 +167,10 @@ def run_now(
         # 有历史 → batch 补齐缺口。
         # 也覆盖"今天已有数据但无实时行情权限(free/none)"的降级场景:
         #   此时 start_date = latest_daily = today,batch 刷新当天日K。
-        start_date = latest_daily
+        # 起点回退 5 天缓冲: 若 max(date) 被实时快照污染(写进非交易日/未来分区)
+        # 或当天只落了半根蜡烛, 单纯以 max(date) 为起点会永远跳过真实缺口;
+        # 回退几天让每次管道自愈近期数据(range 拉取按 chunk 计费, 多几天无额外成本)。
+        start_date = min(latest_daily, today) - _td(days=5)
         daily_range_start = start_date
         emit("sync_daily", 12, f"获取日K [{start_date} ~ {today}]…")
         logger.info("sync_daily: [%s ~ %s] %s", start_date, today,
@@ -296,6 +299,7 @@ def run_now(
     # 判断新日期方向: 找 daily 和 enriched 的日期集合做比较
     forward_incremental = False
     backward_extension = False
+    inc_dates: set[str] = set()  # 待增量重算的日期(分区差集 + 内容级补充)
 
     if daily_days > prev_enriched_days and enriched_exists:
         daily_dates = sorted(d.stem.split("=")[1] for d in daily_dir.glob("date=*"))
@@ -310,6 +314,31 @@ def run_now(
             # 有新日期晚于 enriched 最晚日期 → 往后新增
             if any(d > latest_enriched for d in new_dates):
                 forward_incremental = True
+            inc_dates |= new_dates
+
+    # 内容级补充判定: 加密 7x24 会先建好当天分区, 美股日K回补进"已存在分区"时
+    # 分区集合差集看不到新数据 → 按资产类别比较美股 daily/enriched 最新日期,
+    # 把 enriched 缺失的美股日期补进待重算集合。
+    if do_us and enriched_exists and not backward_extension:
+        try:
+            s_daily_max = repo.latest_stock_daily_date()
+            s_enr_max = repo.latest_stock_enriched_date()
+            if s_daily_max and (s_enr_max is None or s_daily_max > s_enr_max):
+                lo = s_enr_max.isoformat() if s_enr_max else ""
+                hi = s_daily_max.isoformat()
+                stale = {
+                    p.stem.split("=")[1] for p in daily_dir.glob("date=*")
+                    if lo < p.stem.split("=")[1] <= hi
+                }
+                if stale - inc_dates:
+                    logger.info(
+                        "compute_enriched: 内容级判定补充 %d 个待重算日期 (美股 enriched %s < daily %s)",
+                        len(stale - inc_dates), s_enr_max, s_daily_max)
+                if stale:
+                    inc_dates |= stale
+                    forward_incremental = True
+        except Exception as e:  # noqa: BLE001
+            logger.warning("内容级增量判定失败(退回分区差集口径): %s", e)
 
     def _enriched_batch_progress(cur: int, tot: int) -> None:
         emit("compute_enriched", 65 + int(23 * cur / tot),
@@ -334,6 +363,7 @@ def run_now(
                     len(symbols_to_recompute))
         written_enriched = run_pipeline(
             new_dates_only=True,
+            dates=sorted(inc_dates) if inc_dates else None,
             symbols=symbols_to_recompute or None,
             on_batch_done=_enriched_batch_progress,
         )

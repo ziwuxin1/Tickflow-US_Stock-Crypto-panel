@@ -27,14 +27,16 @@ export default {
         danger:     'hsl(var(--danger) / <alpha-value>)',
       },
       fontFamily: {
-        sans: ['Inter', '"HarmonyOS Sans SC"', '"PingFang SC"', 'system-ui', 'sans-serif'],
+        // Cyberpunk 主题(design_handoff_cyberpunk): Rajdhani 标题/UI + 中文系统栈
+        sans: ['Rajdhani', '"PingFang SC"', '"Microsoft YaHei"', 'system-ui', 'sans-serif'],
         mono: ['"JetBrains Mono"', '"IBM Plex Mono"', 'ui-monospace', 'monospace'],
       },
       borderRadius: {
-        card: '8px',
-        btn: '6px',
-        input: '4px',
-        dialog: '12px',
+        // CP 形状语言: 全直角
+        card: '0px',
+        btn: '0px',
+        input: '0px',
+        dialog: '0px',
       },
       transitionTimingFunction: {
         // §6.0.4 Linear/Vercel 同款缓动

@@ -15,19 +15,49 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/kline", tags=["kline"])
 
 
+# 加密目录: instruments 表仅含股票, 加密标的在此静态补充
+# (日K接口对任意加密 symbol 都支持 Binance 按需拉取, 无需本地数据)
+_CRYPTO_CATALOG: list[dict] = [
+    {"symbol": "BTCUSDT", "name": "比特币", "code": "BTC"},
+    {"symbol": "ETHUSDT", "name": "以太坊", "code": "ETH"},
+    {"symbol": "SOLUSDT", "name": "Solana", "code": "SOL"},
+    {"symbol": "BNBUSDT", "name": "币安币", "code": "BNB"},
+    {"symbol": "XRPUSDT", "name": "瑞波币", "code": "XRP"},
+    {"symbol": "DOGEUSDT", "name": "狗狗币", "code": "DOGE"},
+    {"symbol": "ADAUSDT", "name": "Cardano", "code": "ADA"},
+]
+
+
+def _search_crypto(keyword: str) -> list[dict]:
+    """加密目录匹配: 代码/symbol 前缀或包含, 或名称包含(中英文)。"""
+    hits = []
+    for c in _CRYPTO_CATALOG:
+        if (
+            c["code"].startswith(keyword)
+            or c["symbol"].startswith(keyword)
+            or keyword in c["symbol"]
+            or keyword in c["name"].upper()
+        ):
+            hits.append(dict(c))
+    return hits
+
+
 @router.get("/instruments/search")
 def search_instruments(
     request: Request,
     q: str = Query("", min_length=0, max_length=50, description="搜索关键词"),
     limit: int = Query(20, ge=1, le=50),
 ):
-    """模糊搜索标的 (代码 / 名称)。从内存 instruments 缓存中查。"""
+    """模糊搜索标的 (代码 / 名称)。股票查内存 instruments 缓存, 加密查静态目录。"""
     repo = request.app.state.repo
     df = repo.get_instruments()
-    if df.is_empty() or not q.strip():
+    if not q.strip():
         return {"results": []}
 
     keyword = q.strip().upper()
+    crypto_hits = _search_crypto(keyword)
+    if df.is_empty():
+        return {"results": crypto_hits[:limit]}
     import polars as pl
 
     # code/symbol 前缀优先，再 name 包含匹配
@@ -52,7 +82,11 @@ def search_instruments(
         contain_hits = df.filter(contains_mask & ~pl.col("symbol").is_in(prefix_symbols)).head(remaining)
         matched = pl.concat([prefix_hits, contain_hits]) if not prefix_hits.is_empty() else contain_hits
     rows = matched.select(["symbol", "name", "code"]).to_dicts()
-    return {"results": rows}
+    # 加密命中放前面(通常是精确代码搜索), 去重后截断到 limit
+    if crypto_hits:
+        seen = {r["symbol"] for r in crypto_hits}
+        rows = crypto_hits + [r for r in rows if r["symbol"] not in seen]
+    return {"results": rows[:limit]}
 
 
 @router.post("/instruments/names")

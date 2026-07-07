@@ -1,0 +1,34 @@
+﻿{
+    "version":  "0.0.1",
+    "configurations":  [
+                           {
+                               "name":  "backend",
+                               "runtimeExecutable":  "backend/.venv/Scripts/python.exe",
+                               "runtimeArgs":  [
+                                                   "-m",
+                                                   "uvicorn",
+                                                   "app.main:app",
+                                                   "--host",
+                                                   "0.0.0.0",
+                                                   "--port",
+                                                   "3018",
+                                                   "--app-dir",
+                                                   "backend"
+                                               ],
+                               "port":  3018
+                           },
+                           {
+                               "name":  "frontend",
+                               "runtimeExecutable":  "pnpm",
+                               "runtimeArgs":  [
+                                                   "-C",
+                                                   "frontend",
+                                                   "dev",
+                                                   "--port",
+                                                   "3013"
+                                               ],
+                               "port":  3013,
+                               "autoPort":  false
+                           }
+                       ]
+}

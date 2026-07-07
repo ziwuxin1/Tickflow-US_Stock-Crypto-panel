@@ -14,9 +14,11 @@ const INPUT_CLS =
   'w-full h-9 px-2.5 rounded-lg bg-base border-0 ring-1 ring-border/30 text-xs font-mono text-foreground placeholder:text-muted/30 focus:outline-none focus:ring-2 focus:ring-accent/30 transition-shadow'
 
 const CODEX_PROVIDER = 'codex_cli'
+const CLAUDE_PROVIDER = 'claude_cli'
 const OPENAI_PROVIDER = 'openai_compat'
 const CUSTOM_CODEX_MODEL = '__custom__'
 const CODEX_COMMAND = 'codex'
+const CLAUDE_COMMAND = 'claude'
 
 const CODEX_MODEL_OPTIONS = [
   { label: 'Codex 默认（推荐）', value: '', hint: '使用当前 Codex CLI 支持的默认模型' },
@@ -29,6 +31,7 @@ const PRESETS: { label: string; provider?: string; url: string; model: string; c
   { label: '通义千问', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-3.6plus', website: 'https://tongyi.aliyun.com/', websiteLabel: 'tongyi.aliyun.com', description: '阿里云 DashScope 兼容模式接口。' },
   { label: '智谱 GLM', url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-5.2', website: 'https://open.bigmodel.cn/', websiteLabel: 'open.bigmodel.cn', description: '智谱 AI 官方 OpenAI 兼容接口。' },
   { label: 'Kimi', url: 'https://api.moonshot.cn/v1', model: 'kimi-k2.6', website: 'https://platform.moonshot.cn/', websiteLabel: 'platform.moonshot.cn', description: '月之暗面 Moonshot 官方 OpenAI 兼容接口，支持超长上下文。' },
+  { label: 'Claude Code CLI', provider: CLAUDE_PROVIDER, url: '', model: '', website: 'https://claude.com/claude-code', websiteLabel: 'claude -p', description: '调用本机 Claude Code CLI(claude -p), 复用已登录的 Claude 账号, 无需 API Key。' },
   { label: 'Codex CLI', provider: CODEX_PROVIDER, url: '', model: '', codexCommand: CODEX_COMMAND, website: 'https://developers.openai.com/codex/noninteractive', websiteLabel: 'codex exec', description: '调用本机 Codex CLI 的 codex exec, 适合已登录 ChatGPT/Codex 的本地环境。' },
   { label: '炸鸡中转站', url: 'https://code.alysc.top/v1', model: 'gpt-5.5', website: 'https://code.alysc.top/sign-up?aff=1afk', websiteLabel: 'code.alysc.top', description: 'OpenAI 兼容中转服务，适合直接使用国际模型。', partner: true, promo: '通过链接邀请注册赠送免费额度 · 国际模型最低0.01倍率' },
 ]
@@ -53,11 +56,15 @@ export function SettingsAIPanel() {
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
 
   const isCodexProvider = provider === CODEX_PROVIDER
+  const isClaudeProvider = provider === CLAUDE_PROVIDER
+  const isCliProvider = isCodexProvider || isClaudeProvider
   const savedCodexProvider = s?.ai_provider === CODEX_PROVIDER
-  const configured = s?.ai_configured ?? (savedCodexProvider ? !!(s?.ai_codex_command ?? CODEX_COMMAND) : s?.has_ai_key)
-  const selectedPreset = PRESETS.find(p => (p.provider ?? OPENAI_PROVIDER) === provider && (isCodexProvider ? p.codexCommand === codexCommand : p.url === baseUrl))
+  const savedClaudeProvider = s?.ai_provider === CLAUDE_PROVIDER
+  const configured = s?.ai_configured ?? ((savedCodexProvider || savedClaudeProvider) ? true : s?.has_ai_key)
+  const selectedPreset = PRESETS.find(p => (p.provider ?? OPENAI_PROVIDER) === provider
+    && (isClaudeProvider ? true : isCodexProvider ? p.codexCommand === codexCommand : p.url === baseUrl))
   const codexModelSelectValue = codexCustomModel ? CUSTOM_CODEX_MODEL : model
-  const canSave = isCodexProvider ? true : !!baseUrl.trim() && !!model.trim()
+  const canSave = isCliProvider ? true : !!baseUrl.trim() && !!model.trim()
 
   useEffect(() => {
     if (!s) return
@@ -179,10 +186,12 @@ export function SettingsAIPanel() {
             <div className="text-sm font-medium text-foreground">{configured ? 'AI 已连接' : 'AI 未配置'}</div>
             <div className="text-xs text-muted mt-0.5 truncate">
               {configured
-                ? (savedCodexProvider
-                  ? `${s?.ai_codex_command ?? CODEX_COMMAND} · ${s?.ai_model || '默认模型'}`
-                  : `${s?.ai_model} · ${s?.ai_api_key_masked}`)
-                : (isCodexProvider ? '使用本机 codex exec, 此处无需填写 API Key。' : '配置 API Key 后即可使用 AI 功能。')}
+                ? (savedClaudeProvider
+                  ? `${CLAUDE_COMMAND} -p · ${s?.ai_model || '默认模型'}`
+                  : savedCodexProvider
+                    ? `${s?.ai_codex_command ?? CODEX_COMMAND} · ${s?.ai_model || '默认模型'}`
+                    : `${s?.ai_model} · ${s?.ai_api_key_masked}`)
+                : (isCliProvider ? '使用本机 CLI, 此处无需填写 API Key。' : '配置 API Key 后即可使用 AI 功能。')}
             </div>
           </div>
         </div>
@@ -201,7 +210,7 @@ export function SettingsAIPanel() {
               className={`rounded-lg border px-3 py-2 text-left transition-all ${selectedPreset?.label === p.label ? 'border-accent/40 bg-accent/10 text-accent' : 'border-border bg-base text-secondary hover:border-accent/30'}`}>
               <div className="flex items-center gap-1.5 text-xs font-medium">
                 <span>{p.label}</span>
-                {p.provider === CODEX_PROVIDER && <Terminal className="h-3 w-3" />}
+                {(p.provider === CODEX_PROVIDER || p.provider === CLAUDE_PROVIDER) && <Terminal className="h-3 w-3" />}
                 {p.partner && <span className="rounded-full border border-orange-400/30 bg-orange-400/10 px-1.5 py-px text-[9px] text-orange-400">赞助</span>}
               </div>
             </button>
@@ -226,14 +235,25 @@ export function SettingsAIPanel() {
         icon={Settings2}
         title="自定义配置"
         right={
-          <span className="inline-flex items-center gap-1.5 text-[10px] text-muted/60" title={isCodexProvider ? 'Use local Codex CLI via codex exec' : 'Use OpenAI-compatible Chat Completions API'}>
-            <span className="rounded-full border border-border/40 bg-base/50 px-1.5 py-px font-mono">{isCodexProvider ? 'codex exec' : 'Chat Completions'}</span>
-            {isCodexProvider ? 'CLI' : '接口'}
+          <span className="inline-flex items-center gap-1.5 text-[10px] text-muted/60" title={isCliProvider ? 'Use local CLI in non-interactive mode' : 'Use OpenAI-compatible Chat Completions API'}>
+            <span className="rounded-full border border-border/40 bg-base/50 px-1.5 py-px font-mono">{isClaudeProvider ? 'claude -p' : isCodexProvider ? 'codex exec' : 'Chat Completions'}</span>
+            {isCliProvider ? 'CLI' : '接口'}
           </span>
         }
       >
         <div className="space-y-4">
-          {isCodexProvider ? (
+          {isClaudeProvider ? (
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="CLI 命令" hint="固定使用本机 claude 命令(Claude Code), 复用已登录账号, 无需 API Key。">
+                <div className={`${INPUT_CLS} flex items-center text-muted/80 select-none`} aria-label="Claude CLI command">
+                  {CLAUDE_COMMAND} -p
+                </div>
+              </Field>
+              <Field label="模型（可选）" hint="留空使用 Claude Code 默认模型; 可填 sonnet / opus / haiku 或完整模型 ID。">
+                <input type="text" value={model} onChange={e => setModel(e.target.value)} placeholder="默认" className={INPUT_CLS} />
+              </Field>
+            </div>
+          ) : isCodexProvider ? (
             <div className="grid grid-cols-2 gap-4">
               <Field label="CLI 命令" hint="固定使用默认 codex 命令, 由后端自动解析本机 Codex Desktop/CLI, 不支持自定义可执行路径。">
                 <div className={`${INPUT_CLS} flex items-center text-muted/80 select-none`} aria-label="Codex CLI command">
@@ -327,9 +347,11 @@ export function SettingsAIPanel() {
       <div className="rounded-card border border-amber-400/20 bg-amber-400/[0.04] px-4 py-3 flex items-start gap-3">
         <Shield className="h-4 w-4 text-amber-400/70 mt-0.5 shrink-0" />
         <div className="text-[11px] text-amber-400/70 leading-relaxed">
-          {isCodexProvider
-            ? 'Codex CLI 模式会复用本机已登录的 Codex 账户, 个股、财务、复盘等分析上下文会发送给 OpenAI/Codex。保存即表示确认仅在本机或可信内网使用。'
-            : 'API Key 仅保存在本机项目文件中, 不会上传到任何服务器。请妥善保管。'}
+          {isClaudeProvider
+            ? 'Claude Code CLI 模式会复用本机已登录的 Claude 账号, 个股、财务、复盘等分析上下文会发送给 Anthropic。保存即表示确认仅在本机或可信内网使用。'
+            : isCodexProvider
+              ? 'Codex CLI 模式会复用本机已登录的 Codex 账户, 个股、财务、复盘等分析上下文会发送给 OpenAI/Codex。保存即表示确认仅在本机或可信内网使用。'
+              : 'API Key 仅保存在本机项目文件中, 不会上传到任何服务器。请妥善保管。'}
         </div>
       </div>
 

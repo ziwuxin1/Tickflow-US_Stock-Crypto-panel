@@ -174,6 +174,33 @@ async def analyze_stock(request: Request, req: AnalyzeRequest):
     )
 
 
+class PredictRequest(BaseModel):
+    """AI 自动预测请求。"""
+    symbol: str
+    name: str = ""
+
+
+@router.post("/predict")
+async def predict(request: Request, req: PredictRequest):
+    """AI 自动预测 — 经本机 Claude Code CLI 运行 global-stock-data 技能(耗时数分钟)。
+
+    返回 {prediction: {stance, one_liner, confidence, signals, levels, risks,
+    opportunities, advice}, report, close, generated_at}。
+    前端据 levels 在 K 线上自动画线, report 与其余字段渲染可视化面板。
+    """
+    if not req.symbol:
+        raise HTTPException(400, "symbol 不能为空")
+    from app.services.stock_predictor import predict_stock
+
+    try:
+        return await predict_stock(request.app.state.repo, req.symbol, req.name)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.exception("AI predict failed for %s", req.symbol)
+        raise HTTPException(502, f"AI 预测失败: {e}") from e
+
+
 # ================================================================
 # 报告 CRUD(历史报告持久化)
 # ================================================================

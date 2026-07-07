@@ -17,6 +17,8 @@ from app.config import settings
 OPENAI_COMPAT_PROVIDER = "openai_compat"
 CODEX_CLI_PROVIDER = "codex_cli"
 CODEX_DEFAULT_COMMAND = "codex"
+CLAUDE_CLI_PROVIDER = "claude_cli"
+CLAUDE_DEFAULT_COMMAND = "claude"
 CODEX_SERVICE_TIER_FALLBACK = "fast"
 CODEX_SUPPORTED_SERVICE_TIERS = {"fast", "flex"}
 
@@ -44,6 +46,10 @@ def current_codex_command() -> str:
 
 def is_codex_cli_provider(provider: str | None = None) -> bool:
     return (provider or current_ai_provider()) == CODEX_CLI_PROVIDER
+
+
+def is_claude_cli_provider(provider: str | None = None) -> bool:
+    return (provider or current_ai_provider()) == CLAUDE_CLI_PROVIDER
 
 
 def normalize_codex_model(model: str) -> str:
@@ -82,10 +88,16 @@ def codex_cli_available() -> bool:
         return False
 
 
+def claude_cli_available() -> bool:
+    return _resolve_claude_command() is not None
+
+
 def ai_configured(provider: str | None = None) -> bool:
     provider = provider or current_ai_provider()
     if is_codex_cli_provider(provider):
         return codex_cli_available()
+    if is_claude_cli_provider(provider):
+        return claude_cli_available()
     return bool(secrets_store.get_ai_key())
 
 
@@ -99,6 +111,8 @@ async def generate_ai_text(
     """Return a complete AI response from the currently configured provider."""
     if is_codex_cli_provider():
         return await _run_codex_cli(messages, max_tokens=max_tokens, timeout=max(timeout, 600.0))
+    if is_claude_cli_provider():
+        return await _run_claude_cli(messages, max_tokens=max_tokens, timeout=max(timeout, 600.0))
     return await _run_openai_once(
         messages,
         temperature=temperature,
@@ -121,6 +135,10 @@ async def stream_ai_text(
     """
     if is_codex_cli_provider():
         yield await _run_codex_cli(messages, max_tokens=max_tokens, timeout=max(timeout, 600.0))
+        return
+
+    if is_claude_cli_provider():
+        yield await _run_claude_cli(messages, max_tokens=max_tokens, timeout=max(timeout, 600.0))
         return
 
     async for chunk in _stream_openai(
@@ -258,6 +276,105 @@ async def _run_codex_cli(
         if not result:
             raise RuntimeError("Codex CLI 未返回内容")
         return result
+
+
+async def _run_claude_cli(
+    messages: Sequence[Message],
+    *,
+    max_tokens: int,
+    timeout: float,
+) -> str:
+    """调用本机 Claude Code CLI(claude -p): 使用已登录账号, 无需 API Key。
+
+    prompt 走 stdin(规避 Windows 命令行长度/引号问题); --strict-mcp-config 跳过用户
+    MCP 配置加载(纯文本生成用不到, 且能显著加快启动); cwd 指向临时空目录做隔离。
+    """
+    prompt = _codex_prompt(messages, max_tokens=max_tokens)
+    resolved = _resolve_claude_command()
+    if not resolved:
+        raise RuntimeError("未找到 Claude Code CLI(claude), 请确认本机已安装并可在终端运行 claude")
+
+    args = [resolved, "-p", "--output-format", "text", "--strict-mcp-config"]
+    model = current_ai_model().strip()
+    if model:
+        args.extend(["--model", model])
+
+    # ignore_cleanup_errors: Windows 下 claude 子进程退出瞬间仍占用 cwd 句柄, 删除失败不应影响结果
+    with tempfile.TemporaryDirectory(prefix="tickflow-claude-run-", ignore_cleanup_errors=True) as run_dir:
+        env = os.environ.copy()
+        env.setdefault("NO_COLOR", "1")
+
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=run_dir,
+            env=env,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(prompt.encode("utf-8")),
+                timeout=timeout,
+            )
+        except TimeoutError as exc:
+            proc.kill()
+            await proc.wait()
+            raise RuntimeError("Claude Code CLI 调用超时, 请稍后重试或检查本机 claude 登录状态") from exc
+
+        out = _clean_process_text(stdout)
+        err = _clean_process_text(stderr)
+        if proc.returncode != 0:
+            detail = err or out or f"exit code {proc.returncode}"
+            raise RuntimeError(f"Claude Code CLI 调用失败: {detail[-1200:]}")
+        if not out:
+            raise RuntimeError("Claude Code CLI 未返回内容")
+        return out
+
+
+def _resolve_claude_command() -> str | None:
+    """定位本机 Claude Code CLI: PATH → npm 全局目录 → 原生安装目录。
+
+    Windows 上 npm shim 同名存在 claude(.ps1/.cmd), CreateProcess 无法直接跑 .ps1,
+    统一换成同目录 .cmd/.exe。
+    """
+    resolved = shutil.which(CLAUDE_DEFAULT_COMMAND)
+    if resolved and sys.platform == "win32":
+        path = Path(resolved)
+        if path.suffix.lower() == ".ps1":
+            for suffix in (".cmd", ".exe"):
+                alt = path.with_suffix(suffix)
+                if alt.exists():
+                    return str(alt)
+            resolved = None
+        elif not path.suffix:
+            cmd_path = path.with_suffix(".cmd")
+            if cmd_path.exists():
+                return str(cmd_path)
+    if resolved:
+        return resolved
+
+    if sys.platform != "win32":
+        candidate = Path.home() / ".local" / "bin" / "claude"
+        return str(candidate) if candidate.exists() else None
+
+    dirs: list[Path] = []
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        dirs.append(Path(appdata) / "npm")
+    dirs.append(Path.home() / "AppData" / "Roaming" / "npm")
+    dirs.append(Path.home() / ".local" / "bin")
+    for directory in dirs:
+        for name in ("claude.cmd", "claude.exe", "claude.bat"):
+            candidate = directory / name
+            if candidate.exists():
+                return str(candidate)
+    # npm shim 背后的实际可执行文件
+    if appdata:
+        exe = Path(appdata) / "npm" / "node_modules" / "@anthropic-ai" / "claude-code" / "bin" / "claude.exe"
+        if exe.exists():
+            return str(exe)
+    return None
 
 
 def _codex_prompt(messages: Sequence[Message], *, max_tokens: int) -> str:

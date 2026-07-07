@@ -1,33 +1,24 @@
-import { useEffect, useRef, useMemo, useState } from 'react'
-import * as echarts from 'echarts'
-import type { ECharts, EChartsOption } from 'echarts'
-import type { KlineRow, LevelSeries } from '@/lib/api'
-import { BULL_SOFT, BEAR_SOFT } from '@/lib/palette'
+import { useMemo, useState } from 'react'
+import type { AiPatterns, KlineRow, LevelSeries } from '@/lib/api'
+import { KLineChart } from '@/components/indices/KLineChart'
+import { normalizeBars } from '@/components/indices/chartMath'
+import type { CurveOverlay, LevelLine } from '@/components/indices/levelOverlays'
+import { TRI_LINE, WAVE_SEQ } from '@/components/indices/tokens'
+import { FORECAST_LINE } from '@/components/indices/forecastLine'
 
 /**
- * 个股分析专用日 K 图表。
+ * 个股分析专用日 K 图表 — 与指数页共用 KLineChart(SVG 自绘)统一界面:
+ * OHLC 信息行 / MA 图例 / 蜡烛+均线 / 成交量 / MACD / 波浪信号 / 三角区,
+ * 滚轮缩放 · 拖拽平移 · 双击复位。
  *
- * 与 StockDailyKChart/EChartsCandlestick 刻意不复用:
- *   - 那套图表面向「行情浏览」,强调全套指标副图(MA/MACD/KDJ/BOLL)、事件标记等;
- *   - 本图表面向「分析决策」,核心是【关键价位】(压力/支撑/密集区/枢轴/前高前低),
- *     通过开关按钮控制各价位组的显隐,布局更简洁(主图 + 成交量即可)。
- *
- * 预留接口(类型已定义,渲染逻辑留 hook,后续实现):
- *   - markers: 日期标记点(新闻/暴雷/利好 → markPoint)
- *   - ranges:  区间高亮(事件区间 → markArea)
- *   - onDateClick: 点击日期回调(后续接消息面时间轴)
- *   - 指标副图: 后续如需 MACD/KDJ,按 SUB_CHARTS 模式扩展
+ * 个股分析特有部分(全部保留):
+ *   - 关键价位开关组(压力支撑/枢轴点/前高前低/布林带/Keltner/ATR止损/缺口位/斐波那契/整数关口)
+ *   - 枢轴点档位选择器(1=P+R1/S1, 2=到R2/S2, 3=全档)
+ *   - 价位统计面板(压力位/支撑位结构化列表)
+ * 水平价位线与通道曲线以 levelLines/curves 叠加层传入 KLineChart。
  */
 
-// ===== 配色(与主图一致的绿涨红跌,深色背景) — 色值取自 lib/palette =====
-const THEME = {
-  bull: BULL_SOFT,
-  bear: BEAR_SOFT,
-  text: '#A1A1AA',
-  grid: 'rgba(255,255,255,0.04)',
-  volUp: 'rgba(18,183,106,0.5)',
-  volDown: 'rgba(240,68,56,0.5)',
-}
+const TEXT_FALLBACK = '#A1A1AA'
 
 // ===== 价位类型(与后端 levels.py 的 LEVEL_TYPES 对齐) =====
 export type LevelType = 'sr' | 'pivot' | 'extreme' | 'boll' | 'keltner_s' | 'keltner_m' | 'keltner_l' | 'atr_stop' | 'gap' | 'fib' | 'round'
@@ -42,7 +33,7 @@ export interface PriceLevel {
   rank?: number
 }
 
-/** 价位组开关配置:label = 按钮文案,color = markLine 颜色 */
+/** 价位组开关配置:label = 按钮文案,color = 价位线颜色 */
 export const LEVEL_GROUPS: { key: LevelType; label: string; color: string }[] = [
   { key: 'sr',       label: '压力支撑',  color: '#F97316' },   // 橙(成交密集区,价量驱动)
   { key: 'pivot',    label: '枢轴点',    color: '#8B5CF6' },   // 紫
@@ -57,37 +48,22 @@ export const LEVEL_GROUPS: { key: LevelType; label: string; color: string }[] = 
   { key: 'round',    label: '整数关口',  color: '#71717A' },   // 灰(心理位,弱视觉)
 ]
 
-// 通道曲线元数据(单一数据源):供 buildOption 画线 + 右侧面板取最新值共用。
+// 通道曲线元数据(单一数据源):供叠加层画线使用。
 //   alignedKey: alignedSeries 中的 key(由 series.boll/keltner/atr 对齐而来)
 //   group:      属于哪个价位开关组(开关该组即开关这条曲线)
-//   endLabel:   右侧端点标签(显示最新值的文字)
-const CURVE_DEFS: { alignedKey: string; group: LevelType; endLabel: string; color: string; dashed?: boolean }[] = [
-  { alignedKey: 'boll_upper',     group: 'boll',      endLabel: '布林上轨', color: '#F97316', dashed: true },
-  { alignedKey: 'boll_lower',     group: 'boll',      endLabel: '布林下轨', color: '#F97316', dashed: true },
-  { alignedKey: 'boll_mid',       group: 'boll',      endLabel: '布林中轨', color: '#FB923C', dashed: false },
-  { alignedKey: 'keltner_s_upper',group: 'keltner_s', endLabel: 'Keltner短上', color: '#06B6D4', dashed: true },
-  { alignedKey: 'keltner_s_lower',group: 'keltner_s', endLabel: 'Keltner短下', color: '#06B6D4', dashed: true },
-  { alignedKey: 'keltner_m_upper',group: 'keltner_m', endLabel: 'Keltner中上', color: '#22D3EE', dashed: true },
-  { alignedKey: 'keltner_m_lower',group: 'keltner_m', endLabel: 'Keltner中下', color: '#22D3EE', dashed: true },
-  { alignedKey: 'keltner_l_upper',group: 'keltner_l', endLabel: 'Keltner长上', color: '#67E8F9', dashed: true },
-  { alignedKey: 'keltner_l_lower',group: 'keltner_l', endLabel: 'Keltner长下', color: '#67E8F9', dashed: true },
-  { alignedKey: 'atr_stop',       group: 'atr_stop',  endLabel: 'ATR止损', color: '#EF4444', dashed: true },
-  { alignedKey: 'atr_tp',         group: 'atr_stop',  endLabel: 'ATR止盈', color: '#F87171', dashed: true },
+const CURVE_DEFS: { alignedKey: string; group: LevelType; color: string; dashed?: boolean }[] = [
+  { alignedKey: 'boll_upper',     group: 'boll',      color: '#F97316', dashed: true },
+  { alignedKey: 'boll_lower',     group: 'boll',      color: '#F97316', dashed: true },
+  { alignedKey: 'boll_mid',       group: 'boll',      color: '#FB923C', dashed: false },
+  { alignedKey: 'keltner_s_upper',group: 'keltner_s', color: '#06B6D4', dashed: true },
+  { alignedKey: 'keltner_s_lower',group: 'keltner_s', color: '#06B6D4', dashed: true },
+  { alignedKey: 'keltner_m_upper',group: 'keltner_m', color: '#22D3EE', dashed: true },
+  { alignedKey: 'keltner_m_lower',group: 'keltner_m', color: '#22D3EE', dashed: true },
+  { alignedKey: 'keltner_l_upper',group: 'keltner_l', color: '#67E8F9', dashed: true },
+  { alignedKey: 'keltner_l_lower',group: 'keltner_l', color: '#67E8F9', dashed: true },
+  { alignedKey: 'atr_stop',       group: 'atr_stop',  color: '#EF4444', dashed: true },
+  { alignedKey: 'atr_tp',         group: 'atr_stop',  color: '#F87171', dashed: true },
 ]
-
-// ===== 预留:标记 / 区间(后续新闻面、事件区间用) =====
-export interface ChartMarker {
-  date: string
-  label?: string
-  color?: string
-  above?: boolean
-}
-export interface ChartRange {
-  start: string
-  end: string
-  label?: string
-  color?: string
-}
 
 interface Props {
   rows: KlineRow[]
@@ -98,254 +74,92 @@ interface Props {
   seriesDates?: string[]
   /** 默认开启的价位组 */
   defaultLevelTypes?: LevelType[]
-  /** 预留:新闻/暴雷/利好日期标记 */
-  markers?: ChartMarker[]
-  /** 预留:事件区间高亮 */
-  ranges?: ChartRange[]
-  /** 预留:点击某根 K 线 */
+  /** AI 自动预测点位(进出场/止损/目标等), 有值时显示"AI点位"开关 */
+  extraLevels?: LevelLine[]
+  /** AI 形态标注(三角区/预测路径/波浪拐点), 随"AI点位"开关显隐 */
+  aiPatterns?: AiPatterns | null
+  /** 点击某根 K 线 */
   onDateClick?: (date: string) => void
-  height?: number
   className?: string
 }
-
-const VOL_PANE_H = 90
 
 export function AnalysisKChart({
   rows,
   levels,
   series,
   seriesDates,
-  defaultLevelTypes = ['sr', 'pivot', 'keltner_s'],
-  markers,
-  ranges,
+  defaultLevelTypes = [],
+  extraLevels,
+  aiPatterns,
   onDateClick,
-  height = 460,
   className,
 }: Props) {
-  const chartRef = useRef<HTMLDivElement>(null)
-  const chartInstRef = useRef<ECharts | null>(null)
   const [activeTypes, setActiveTypes] = useState<Set<LevelType>>(new Set(defaultLevelTypes))
   /** 枢轴点显示到第几档:1=只P+R1/S1, 2=到R2/S2, 3=全档(R3/S3) */
   const [pivotRank, setPivotRank] = useState<1 | 2 | 3>(1)
+  // 个股分析页默认全部关闭(用户按需开启); AI点位随预测结果默认展示
+  const [showWave, setShowWave] = useState(false)
+  const [showTri, setShowTri] = useState(false)
+  const [showFc, setShowFc] = useState(false)
+  const [showAi, setShowAi] = useState(true)
 
-  // 数据预处理 + 带状曲线序列对齐(后端 series 的日期范围可能与 rows 不同,需映射)
-  const { dates, candle, vols, dateIndex, zoomStart, alignedSeries } = useMemo(() => {
-    const dates = rows.map(r => (typeof r.date === 'string' ? r.date.slice(0, 10) : String(r.date)))
-    const candle = rows.map(r => [r.open, r.close, r.low, r.high])
-    const vols = rows.map(r => ({
-      value: r.volume ?? 0,
-      itemStyle: { color: r.close >= r.open ? THEME.volUp : THEME.volDown },
-    }))
-    const dateIndex = new Map(dates.map((d, i) => [d, i]))
-    // 默认显示最近 6 个月 ≈ 120 个交易日;数据不足则全部显示
-    const showBars = 120
-    const zoomStart = dates.length > showBars ? Math.round((1 - showBars / dates.length) * 100) : 0
+  // KlineRow → KBar(统一图表数据格式, MA/MACD 缺失时客户端回退计算)
+  const bars = useMemo(() => normalizeBars(rows), [rows])
 
-    // 把后端 series(按 seriesDates 对齐)映射到前端 rows 的 dates 顺序
-    const alignedSeries: Record<string, (number | null)[]> = {}
-    if (series && seriesDates && seriesDates.length > 0) {
-      // 构建 seriesDates 索引
-      const sIdx = new Map(seriesDates.map((d, i) => [d, i]))
-      // 通用对齐:给定 series 里某条数组,返回与 rows dates 对齐的版本
-      const align = (arr: (number | null)[] | undefined): (number | null)[] => {
-        if (!arr) return dates.map(() => null)
-        return dates.map(d => {
-          const i = sIdx.get(d)
-          return i != null ? arr[i] : null
-        })
-      }
-      if (series.boll) {
-        alignedSeries['boll_upper'] = align(series.boll.upper)
-        alignedSeries['boll_lower'] = align(series.boll.lower)
-        if (series.boll.mid) alignedSeries['boll_mid'] = align(series.boll.mid)
-      }
-      if (series.keltner_s) {
-        alignedSeries['keltner_s_upper'] = align(series.keltner_s.upper)
-        alignedSeries['keltner_s_lower'] = align(series.keltner_s.lower)
-      }
-      if (series.keltner_m) {
-        alignedSeries['keltner_m_upper'] = align(series.keltner_m.upper)
-        alignedSeries['keltner_m_lower'] = align(series.keltner_m.lower)
-      }
-      if (series.keltner_l) {
-        alignedSeries['keltner_l_upper'] = align(series.keltner_l.upper)
-        alignedSeries['keltner_l_lower'] = align(series.keltner_l.lower)
-      }
-      if (series.atr) {
-        alignedSeries['atr_stop'] = align(series.atr.stop_loss)
-        alignedSeries['atr_tp'] = align(series.atr.take_profit)
-      }
-    }
-
-    return { dates, candle, vols, dateIndex, zoomStart, alignedSeries }
-  }, [rows, series, seriesDates])
-
-  // 构建 option
-  const buildOption = (): EChartsOption => {
-    const priceLines = collectPriceLines(levels, activeTypes, pivotRank)
-
-    // 三段布局:主图 / 成交量 / 缩放条,从上到下累加,各段之间留间距,互不遮挡
-    //   [16 顶部] [mainH 主图] [8 间距] [volH 成交量] [12 间距] [SLIDER_H 缩放条] [8 底部]
-    const SLIDER_H = 22
-    const PAD_TOP = 16
-    const GAP_MAIN_VOL = 8        // 主图 ↔ 成交量
-    const GAP_VOL_SLIDER = 12     // 成交量 ↔ 缩放条(留足,避免遮挡)
-    const PAD_BOTTOM = 8
-    const volH = VOL_PANE_H
-    const mainH = height - PAD_TOP - GAP_MAIN_VOL - volH - GAP_VOL_SLIDER - SLIDER_H - PAD_BOTTOM
-    const volTop = PAD_TOP + mainH + GAP_MAIN_VOL
-    const sliderBottom = PAD_BOTTOM
-
-    // 预留:markPoint(新闻标记)
-    const markPointData: any[] = (markers ?? [])
-      .filter(m => dateIndex.has(m.date))
-      .map(m => ({
-        coord: [m.date, rows[dateIndex.get(m.date)!].high],
-        symbol: 'pin', symbolSize: 32,
-        itemStyle: { color: m.color ?? '#EAB308' },
-        label: { show: !!m.label, formatter: m.label ?? '', fontSize: 9, color: '#fff' },
-      }))
-
-    // 预留:markArea(事件区间)
-    const markAreaData: any[] = (ranges ?? [])
-      .filter(r => dateIndex.has(r.start) && dateIndex.has(r.end))
-      .map(r => [{
-        xAxis: r.start, name: r.label ?? '',
-        itemStyle: { color: r.color ?? 'rgba(234,179,8,0.08)' },
-        label: r.label ? { show: true, position: 'insideTop', distance: 6, color: '#EAB308', fontSize: 10 } : undefined,
-      }, { xAxis: r.end }])
-
-    const series: any[] = [
-      {
-        name: 'K', type: 'candlestick', data: candle, animation: false,
-        itemStyle: {
-          color: THEME.bull, color0: THEME.bear,
-          borderColor: THEME.bull, borderColor0: THEME.bear,
-        },
-        markPoint: markPointData.length ? { data: markPointData, animation: false } : undefined,
-        markArea: markAreaData.length ? { silent: true, data: markAreaData } : undefined,
-      },
-      {
-        name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1,
-        data: vols, animation: false,
-      },
-    ]
-
-    // 价位水平线 —— 用 line series(恒定值)画水平线,endLabel 显示标签文字;
-    // 与通道曲线一致,标签落在右侧 grid.right 预留带(外侧),不压蜡烛。
-    for (const p of priceLines) {
-      series.push({
-        name: p.label, type: 'line', silent: true, animation: false,
-        symbol: 'none',
-        data: dates.map(() => p.value),
-        lineStyle: { width: 1, color: p.color, type: 'dashed', opacity: 0.7 },
-        itemStyle: { color: p.color },
-        endLabel: {
-          show: true,
-          formatter: () => `${p.label} ${p.value.toFixed(2)}`,
-          color: p.color, fontSize: 9, fontFamily: 'JetBrains Mono, monospace',
-          backgroundColor: 'rgba(15,23,42,0.85)', padding: [1, 4], borderRadius: 2,
-          distance: 6,
-        },
+  // 带状曲线序列对齐(后端 series 的日期范围可能与 rows 不同,需映射)
+  const alignedSeries = useMemo(() => {
+    const dates = bars.map(b => b.date)
+    const out: Record<string, (number | null)[]> = {}
+    if (!series || !seriesDates || seriesDates.length === 0) return out
+    const sIdx = new Map(seriesDates.map((d, i) => [d, i]))
+    const align = (arr: (number | null)[] | undefined): (number | null)[] => {
+      if (!arr) return dates.map(() => null)
+      return dates.map(d => {
+        const i = sIdx.get(d)
+        return i != null ? arr[i] : null
       })
     }
+    if (series.boll) {
+      out['boll_upper'] = align(series.boll.upper)
+      out['boll_lower'] = align(series.boll.lower)
+      if (series.boll.mid) out['boll_mid'] = align(series.boll.mid)
+    }
+    if (series.keltner_s) {
+      out['keltner_s_upper'] = align(series.keltner_s.upper)
+      out['keltner_s_lower'] = align(series.keltner_s.lower)
+    }
+    if (series.keltner_m) {
+      out['keltner_m_upper'] = align(series.keltner_m.upper)
+      out['keltner_m_lower'] = align(series.keltner_m.lower)
+    }
+    if (series.keltner_l) {
+      out['keltner_l_upper'] = align(series.keltner_l.upper)
+      out['keltner_l_lower'] = align(series.keltner_l.lower)
+    }
+    if (series.atr) {
+      out['atr_stop'] = align(series.atr.stop_loss)
+      out['atr_tp'] = align(series.atr.take_profit)
+    }
+    return out
+  }, [bars, series, seriesDates])
 
-    // 带状曲线指标(布林带 / Keltner通道 / ATR止损) —— 跟随行情漂移的曲线
-    // 单一数据源 CURVE_DEFS 驱动:每条曲线带 endLabel(右侧端点标签),显示最新数值
+  // 水平价位线(按开启的组 + 档位过滤) + AI 预测点位(开关控制)
+  const levelLines = useMemo<LevelLine[]>(() => {
+    const base = collectPriceLines(levels, activeTypes, pivotRank)
+    return showAi && extraLevels?.length ? [...base, ...extraLevels] : base
+  }, [levels, activeTypes, pivotRank, showAi, extraLevels])
+
+  // 通道曲线(开关该组即开关曲线)
+  const curves = useMemo<CurveOverlay[]>(() => {
+    const out: CurveOverlay[] = []
     for (const def of CURVE_DEFS) {
       if (!activeTypes.has(def.group)) continue
-      const data = alignedSeries[def.alignedKey]
-      if (!data || !data.some(v => v != null)) continue
-      // 取最后一个有效值作为右侧端点显示文字
-      let lastVal: number | null = null
-      for (let i = data.length - 1; i >= 0; i--) {
-        if (data[i] != null) { lastVal = data[i]; break }
-      }
-      series.push({
-        name: def.endLabel, type: 'line', data: data.map(v => v ?? '-'),
-        smooth: true, symbol: 'none', silent: true, animation: false,
-        lineStyle: { width: 1, color: def.color, type: def.dashed === false ? 'solid' : 'dashed', opacity: 0.8 },
-        itemStyle: { color: def.color },
-        // 右侧端点标签:显示该通道的最新数值,距绘图区右缘留 6px 间距
-        endLabel: lastVal != null ? {
-          show: true,
-          formatter: () => `${lastVal!.toFixed(2)}`,
-          color: def.color, fontSize: 9, fontFamily: 'JetBrains Mono, monospace',
-          backgroundColor: 'rgba(15,23,42,0.85)', padding: [1, 4], borderRadius: 2,
-          distance: 6,
-        } : undefined,
-      })
+      const points = alignedSeries[def.alignedKey]
+      if (!points || !points.some(v => v != null)) continue
+      out.push({ key: def.alignedKey, points, color: def.color, dashed: def.dashed })
     }
-
-    return {
-      animation: false,
-      backgroundColor: 'transparent',
-      // grid.right 留出足够宽度给价位标签文字区:蜡烛只占左侧主区域,
-      // 价位线右端的标签文字显示在这条预留带里,不压在蜡烛上。
-      // 预留 ~144px:最长标签(如「成交密集区(POC) 12.34」)约 13 字符,fontSize 9 等宽。
-      grid: [
-        { left: 56, right: 144, top: 16, height: mainH },
-        { left: 56, right: 144, top: volTop, height: volH },
-      ],
-      xAxis: [
-        {
-          type: 'category', data: dates, boundaryGap: true,
-          axisLine: { lineStyle: { color: THEME.grid } },
-          axisLabel: { color: THEME.text, fontSize: 10 },
-          splitLine: { show: false },
-          axisPointer: { show: true, label: { show: false } },
-        },
-        {
-          type: 'category', gridIndex: 1, data: dates, boundaryGap: true,
-          axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false },
-        },
-      ],
-      yAxis: [
-        { scale: true, splitLine: { lineStyle: { color: THEME.grid } },
-          axisLabel: { color: THEME.text, fontSize: 10, fontFamily: 'JetBrains Mono, monospace' } },
-        { scale: true, gridIndex: 1, splitNumber: 2,
-          // 成交量区不画背景横线
-          splitLine: { show: false },
-          axisLabel: { color: THEME.text, fontSize: 9, fontFamily: 'JetBrains Mono, monospace',
-                       formatter: (v: number) => fmtVol(v) } },
-      ],
-      dataZoom: [
-        { type: 'inside', xAxisIndex: [0, 1], start: zoomStart, end: 100 },
-        { type: 'slider', xAxisIndex: [0, 1], bottom: sliderBottom, height: SLIDER_H, start: zoomStart, end: 100,
-          borderColor: 'transparent', fillerColor: 'rgba(255,255,255,0.06)',
-          handleStyle: { color: '#52525B' }, textStyle: { color: THEME.text, fontSize: 10 } },
-      ],
-      // 不弹 hover tooltip(用户要求);但保留十字线 axisPointer 作为缩放/定位参照
-      tooltip: { show: false },
-      axisPointer: { link: [{ xAxisIndex: 'all' }] },
-      series,
-    }
-  }
-
-  // 初始化 + 数据更新
-  useEffect(() => {
-    if (!chartRef.current) return
-    if (!chartInstRef.current) {
-      chartInstRef.current = echarts.init(chartRef.current, undefined, { renderer: 'canvas' })
-      chartInstRef.current.on('click', (params: any) => {
-        // 预留:点击 K 线(非 markPoint/markLine)回调
-        if (params.componentType === 'series' && params.seriesType === 'candlestick' && onDateClick) {
-          onDateClick(dates[params.dataIndex])
-        }
-      })
-    }
-    chartInstRef.current.setOption(buildOption(), true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, levels, series, seriesDates, activeTypes, pivotRank, markers, ranges, height])
-
-  // resize
-  useEffect(() => {
-    const inst = chartInstRef.current
-    if (!inst) return
-    const onResize = () => inst.resize()
-    window.addEventListener('resize', onResize)
-    return () => { window.removeEventListener('resize', onResize); inst.dispose(); chartInstRef.current = null }
-  }, [])
+    return out
+  }, [activeTypes, alignedSeries])
 
   const toggleType = (t: LevelType) => {
     setActiveTypes(prev => {
@@ -355,6 +169,11 @@ export function AnalysisKChart({
       return next
     })
   }
+
+  const chipCls = (active: boolean) =>
+    `inline-flex items-center gap-1 h-6 px-2 rounded-md text-[10px] font-medium border transition-all ${
+      active ? 'text-foreground' : 'text-muted bg-base/40 border-border/30 hover:border-border/60'
+    }`
 
   return (
     <div className={className}>
@@ -375,11 +194,7 @@ export function AnalysisKChart({
                 onClick={() => toggleType(g.key)}
                 disabled={raw.length === 0}
                 title={`${g.label} (${count} 个)`}
-                className={`inline-flex items-center gap-1 h-6 px-2 rounded-md text-[10px] font-medium border transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
-                  active
-                    ? 'text-foreground'
-                    : 'text-muted bg-base/40 border-border/30 hover:border-border/60'
-                }`}
+                className={`${chipCls(active)} disabled:opacity-30 disabled:cursor-not-allowed`}
                 style={active ? { borderColor: g.color + '66', backgroundColor: g.color + '1a' } : undefined}
               >
                 <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: active ? g.color : '#52525B' }} />
@@ -409,10 +224,64 @@ export function AnalysisKChart({
               ))}
             </div>
           )}
+
+          {/* 信号开关: 波浪信号 / 三角区(与指数页图层一致) */}
+          <div className="inline-flex items-center gap-1.5 ml-1 pl-2 border-l border-border/40">
+            <button
+              onClick={() => setShowWave(v => !v)}
+              title="波浪拐点 + 斐波那契标尺 + 支撑区/目标位"
+              className={chipCls(showWave)}
+              style={showWave ? { borderColor: WAVE_SEQ + '66', backgroundColor: WAVE_SEQ + '1a' } : undefined}
+            >
+              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: showWave ? WAVE_SEQ : '#52525B' }} />
+              波浪信号
+            </button>
+            <button
+              onClick={() => setShowTri(v => !v)}
+              title="收敛三角形自动检测"
+              className={chipCls(showTri)}
+              style={showTri ? { borderColor: TRI_LINE + '66', backgroundColor: TRI_LINE + '1a' } : undefined}
+            >
+              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: showTri ? TRI_LINE : '#52525B' }} />
+              三角区
+            </button>
+            <button
+              onClick={() => setShowFc(v => !v)}
+              title="最近 20 根收盘线性回归外推 + 置信扇面(技术外推, 非 AI 预测)"
+              className={chipCls(showFc)}
+              style={showFc ? { borderColor: FORECAST_LINE + '66', backgroundColor: FORECAST_LINE + '1a' } : undefined}
+            >
+              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: showFc ? FORECAST_LINE : '#52525B' }} />
+              预测线
+            </button>
+            {((extraLevels?.length ?? 0) > 0 || aiPatterns) && (
+              <button
+                onClick={() => setShowAi(v => !v)}
+                title="AI 自动预测的点位与形态(进出场/止损/目标/三角区/预测路径/波浪)"
+                className={chipCls(showAi)}
+                style={showAi ? { borderColor: '#2ecc8066', backgroundColor: '#2ecc801a' } : undefined}
+              >
+                <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: showAi ? '#2ecc80' : '#52525B' }} />
+                AI点位
+                <span className="opacity-50">{extraLevels?.length ?? 0}</span>
+              </button>
+            )}
+          </div>
         </div>
       )}
-      {/* 图表:右侧预留带(grid.right 预留)显示价位标签文字,不压蜡烛 */}
-      <div ref={chartRef} style={{ width: '100%', height }} />
+
+      {/* 统一K线图(与指数页同款): OHLC行 / MA图例 / 主图 / 成交量 / MACD */}
+      <KLineChart
+        bars={bars}
+        showSignals={showWave}
+        showTriangle={showTri}
+        showForecast={showFc}
+        aiPatterns={showAi ? aiPatterns ?? null : null}
+        levelLines={levelLines}
+        curves={curves}
+        defaultVisible={120}
+        onDateClick={onDateClick}
+      />
 
       {/* 价位统计面板:把当前开启的点位按"压力 / 支撑"结构化列出 */}
       {levels && (
@@ -420,7 +289,7 @@ export function AnalysisKChart({
           levels={levels}
           activeTypes={activeTypes}
           pivotRank={pivotRank}
-          close={rows.length ? rows[rows.length - 1].close : undefined}
+          close={bars.length ? bars[bars.length - 1].close : undefined}
         />
       )}
     </div>
@@ -465,7 +334,7 @@ function LevelOverview({
   }
 
   const Row = ({ p }: { p: PriceLevel }) => {
-    const color = LEVEL_GROUPS.find(g => g.key === p.type)?.color ?? THEME.text
+    const color = LEVEL_GROUPS.find(g => g.key === p.type)?.color ?? TEXT_FALLBACK
     return (
       <div className="flex items-center gap-2 py-0.5">
         <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
@@ -510,14 +379,14 @@ function LevelOverview({
 }
 
 // ===== 工具:收集要画的水平价位线(按开启的组 + 档位 + 强度配色) =====
-// 注意:带状指标(布林带/Keltner/ATR)改用曲线渲染,不在此画水平线,避免重复。
+// 注意:带状指标(布林带/Keltner/ATR)走曲线渲染,不在此画水平线,避免重复。
 function collectPriceLines(
   levels: Record<LevelType, PriceLevel[]> | undefined,
   active: Set<LevelType>,
   pivotRank: 1 | 2 | 3,
-): { value: number; label: string; color: string }[] {
+): LevelLine[] {
   if (!levels) return []
-  const out: { value: number; label: string; color: string }[] = []
+  const out: LevelLine[] = []
   for (const g of LEVEL_GROUPS) {
     if (!active.has(g.key)) continue
     for (const p of levels[g.key] ?? []) {
@@ -538,12 +407,4 @@ function strengthColor(strength: string | undefined, base: string): string {
   if (strength === 'weak') return base + '8C'
   if (strength === 'medium') return base + 'D9'
   return base
-}
-
-function fmtVol(v: number): string {
-  if (!v) return '0'
-  if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B'
-  if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M'
-  if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K'
-  return v.toFixed(0)
 }

@@ -449,7 +449,12 @@ class QuoteService:
                     len(index_records) + len(crypto_index_records), fetch_ms)
 
         # ---- 写 kline_daily (不复权原始价格; 美股按美东交易日, 加密按 UTC 日) ----
-        daily_df = self._build_daily(stock_records, markets.us_trading_date())
+        # 守卫: 行情快照归属日与当前美东日不一致(周末/假日/凌晨的旧快照)时跳过落盘
+        us_flush_date = self.resolve_us_flush_date(records)
+        daily_df = (
+            self._build_daily(stock_records, us_flush_date)
+            if us_flush_date else pl.DataFrame()
+        )
         if not daily_df.is_empty() and self._repo:
             try:
                 self._repo.flush_live_daily(daily_df)
@@ -464,7 +469,10 @@ class QuoteService:
             except Exception as e:
                 logger.warning("加密日K写盘失败: %s", e)
 
-        etf_daily_df = self._build_daily(etf_records, markets.us_trading_date())
+        etf_daily_df = (
+            self._build_daily(etf_records, us_flush_date)
+            if us_flush_date else pl.DataFrame()
+        )
         if not etf_daily_df.is_empty() and self._repo:
             try:
                 self._repo.flush_live_daily_asset("etf", etf_daily_df)
@@ -545,7 +553,12 @@ class QuoteService:
         logger.info("自选实时刷新: %d 只美股 + %d 个加密, 耗时 %.0fms",
                     len(records), len(crypto_records), fetch_ms)
 
-        daily_df = self._build_daily(records, markets.us_trading_date())
+        # 守卫: 行情快照归属日与当前美东日不一致(周末/假日/凌晨的旧快照)时跳过落盘
+        us_flush_date = self.resolve_us_flush_date(records)
+        daily_df = (
+            self._build_daily(records, us_flush_date)
+            if us_flush_date else pl.DataFrame()
+        )
         quote_extra = self._build_quote_extra(records)
         if not daily_df.is_empty() and self._repo:
             try:
@@ -675,6 +688,41 @@ class QuoteService:
                     row[col] = float(row[col]) / 100
             out.append(row)
         return out
+
+    @staticmethod
+    def resolve_us_flush_date(
+        records: list[dict],
+        today: date | None = None,
+        in_session: bool | None = None,
+    ) -> date | None:
+        """美股日K落盘归属日守卫: 返回可落盘的日期, None 表示应跳过落盘。
+
+        归属日以记录自带 timestamp(最后成交时间)的美东日期为准, 仅与当前美东日期
+        一致时才允许写 kline_daily。周末/假日/凌晨刷新拿到的是上一交易日旧快照,
+        若按 wall-clock 日期落盘会把旧数据写进非交易日/未来分区 — 增量同步以
+        max(date) 为起点, 一旦污染, 真实缺口将永远不被回补。
+        无 timestamp 时退化为: 仅常规交易时段内信任 wall-clock 日期。
+        """
+        if not records:
+            return None
+        if today is None:
+            today = markets.us_trading_date()
+        best_ts = 0.0
+        for r in records:
+            try:
+                best_ts = max(best_ts, float(r.get("timestamp") or 0))
+            except (TypeError, ValueError):
+                continue
+        quote_day = markets.us_date_from_timestamp(best_ts)
+        if quote_day is None:
+            if in_session is None:
+                in_session = markets.is_us_trading_hours()
+            return today if in_session else None
+        if quote_day != today:
+            logger.info("跳过美股日K落盘: 行情时间戳属 %s, 非当前美东日 %s (旧快照)",
+                        quote_day, today)
+            return None
+        return today
 
     @staticmethod
     def _build_daily(records: list[dict], trade_date: date) -> pl.DataFrame:

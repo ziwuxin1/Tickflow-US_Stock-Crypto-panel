@@ -339,7 +339,7 @@ export function EChartsIntraday({ data, height = 320, prevClose, date, symbol, o
   const lineIsUp = lastClose != null && prevClose != null ? lastClose > prevClose : true
   const lineIsFlat = lastClose != null && prevClose != null ? lastClose === prevClose : false
   const lineColor = lineIsFlat ? NEUTRAL : lineIsUp ? BULL_SOFT : BEAR_SOFT
-  const areaFill = lineIsFlat ? 'rgba(180,180,190,0.40)' : lineIsUp ? 'rgba(18,183,106,0.40)' : 'rgba(240,68,56,0.40)'
+  const areaFill = lineIsFlat ? 'rgba(180,180,190,0.40)' : lineIsUp ? 'rgba(58,173,114,0.40)' : 'rgba(204,90,74,0.40)'
 
   useEffect(() => {
     setInfoIdx(data.length - 1)

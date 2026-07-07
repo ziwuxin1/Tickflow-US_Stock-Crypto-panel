@@ -7,6 +7,13 @@ import { QK } from '@/lib/queryKeys'
 
 interface Props {
   onSelect: (symbol: string, name: string) => void
+  /** 覆盖输入框样式(个股分析 CP 主题用) */
+  inputClassName?: string
+  placeholder?: string
+  /** 输入框 DOM id(供快捷键聚焦) */
+  inputId?: string
+  /** CP 终端式占位: 隐藏原生 placeholder, 叠加「文本 + 黄色闪烁光标块」装饰层 */
+  cpPlaceholder?: boolean
 }
 
 /**
@@ -14,7 +21,7 @@ interface Props {
  * 复用 instrumentSearch 后端(代码 / 名称模糊匹配),单选即跳转该股财务详情。
  * 模式对齐 Watchlist.StockSearchBox:useQuery + 外部点击关闭 + 键盘导航。
  */
-export function StockFinancialSearch({ onSelect }: Props) {
+export function StockFinancialSearch({ onSelect, inputClassName, placeholder, inputId, cpPlaceholder }: Props) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [activeIdx, setActiveIdx] = useState(-1)
@@ -70,16 +77,27 @@ export function StockFinancialSearch({ onSelect }: Props) {
     <div ref={containerRef} className="relative w-full max-w-xl mx-auto">
       <div className="relative flex items-center">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted pointer-events-none" />
+        {/* CP 终端式占位装饰层: 文本 + 黄色闪烁光标块(输入为空时显示) */}
+        {cpPlaceholder && !query && (
+          <span className="pointer-events-none absolute left-11 top-1/2 -translate-y-1/2 z-10 flex items-center font-mono text-sm tracking-wide text-[#8f8c7a] whitespace-nowrap">
+            {placeholder ?? '输入股票代码或名称，如 AAPL / 苹果'}
+            <span
+              className="cpfx ml-1.5 inline-block h-[13px] w-[7px] bg-[#d5f021]"
+              style={{ animation: 'cpBlink 1.1s steps(1) infinite' }}
+            />
+          </span>
+        )}
         <input
           ref={inputRef}
+          id={inputId}
           type="text"
-          placeholder="输入股票代码或名称，如 AAPL / 苹果"
+          placeholder={cpPlaceholder ? '' : (placeholder ?? '输入股票代码或名称，如 AAPL / 苹果')}
           value={query}
           onChange={(e) => { setQuery(e.target.value); setOpen(true); setActiveIdx(-1) }}
           onFocus={() => { if (trimmed) setOpen(true) }}
           onKeyDown={handleKeyDown}
-          // 较宽、更醒目 —— 作为财务页主入口
-          className="w-full h-11 pl-11 pr-10 rounded-card bg-surface border border-border text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-accent/50 focus:bg-base transition-colors"
+          // 较宽、更醒目 —— 作为财务页主入口; inputClassName 可整体覆盖(CP 主题)
+          className={inputClassName ?? 'w-full h-11 pl-11 pr-10 rounded-card bg-surface border border-border text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-accent/50 focus:bg-base transition-colors'}
         />
         {search.isFetching && (
           <Loader2 className="absolute right-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted animate-spin" />

@@ -10,7 +10,12 @@ export function useToggleRealtimeQuotes() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (enabled: boolean) => api.updateRealtimeQuotes(enabled),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // 用响应体直写缓存: 开关 UI 即时翻转, 不依赖 invalidate→refetch 链路
+      if (data?.realtime_quotes_enabled != null) {
+        qc.setQueryData(QK.preferences, (old: any) =>
+          old ? { ...old, realtime_quotes_enabled: data.realtime_quotes_enabled } : old)
+      }
       qc.invalidateQueries({ queryKey: QK.preferences })
       qc.invalidateQueries({ queryKey: QK.quoteStatus })
     },

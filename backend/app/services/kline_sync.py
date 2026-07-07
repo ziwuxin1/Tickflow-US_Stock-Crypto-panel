@@ -232,6 +232,21 @@ def sync_daily_by_quotes(repo: KlineRepository) -> int:
         logger.warning("get_by_universes returned empty")
         return 0
 
+    today = markets.us_trading_date()
+    # 守卫: 行情时间戳归属日 != 当前美东日 → 旧快照(周末/假日/凌晨), 跳过落盘。
+    # 否则会把上一交易日数据写进非交易日/未来分区, 污染增量同步起点 max(date)。
+    best_ts = 0.0
+    for q in resp:
+        try:
+            best_ts = max(best_ts, float(q.get("timestamp") or 0))
+        except (TypeError, ValueError):
+            continue
+    quote_day = markets.us_date_from_timestamp(best_ts)
+    if quote_day is not None and quote_day != today:
+        logger.info("sync_daily_by_quotes: 行情时间戳属 %s, 非当前美东日 %s (旧快照), 跳过落盘",
+                    quote_day, today)
+        return 0
+
     records = []
     for q in resp:
         records.append({
@@ -248,7 +263,6 @@ def sync_daily_by_quotes(repo: KlineRepository) -> int:
     if df.is_empty():
         return 0
 
-    today = markets.us_trading_date()
     daily_df = df.with_columns(pl.lit(today).cast(pl.Date).alias("date"))
 
     # amount 兜底: 美股行情 amount 可能为 0 → close*volume 估算

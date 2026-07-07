@@ -308,6 +308,13 @@ def _top_rows(rows: list[dict], key: str, descending: bool, limit: int = 8) -> l
     ]
 
 
+def _active_leaders(rows: list[dict], limit: int = 8) -> list[dict]:
+    """活跃换手榜 — 设计稿定义为美股 TOP8; 数据源缺换手率时按成交额兜底。"""
+    us_rows = [r for r in rows if _asset_bucket(str(r.get("symbol") or "")) == "美股"]
+    top = _top_rows(us_rows, "turnover_rate", True, limit)
+    return top or _top_rows(us_rows, "amount", True, limit)
+
+
 def _pct_band_rows(values: list[float]) -> list[dict]:
     bands = [
         ("<-5%", None, -0.05),
@@ -525,5 +532,5 @@ def build_market_overview(
         "top_gainers": _top_rows(rows, "change_pct", True),
         "top_losers": _top_rows(rows, "change_pct", False),
         "turnover_leaders": _top_rows(rows, "amount", True),
-        "active_leaders": _top_rows(rows, "turnover_rate", True),
+        "active_leaders": _active_leaders(rows),
     })
