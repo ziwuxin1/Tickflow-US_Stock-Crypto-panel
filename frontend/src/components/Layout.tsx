@@ -182,26 +182,20 @@ function SidebarIndexQuotes({ rows, items }: { rows: IndexQuote[] | undefined; i
   )
 }
 
-const TIER_DESC: Record<string, string> = {
-  none: '未配置 Key · 仅历史日K',
-  free: '基础日K · 自选实时',
-  starter: '批量同步 · 行情池',
-  pro: '分钟K · 实时行情 · 盘口',
-  expert: 'WebSocket · 财务数据',
-}
-
-// ===== TickFlow 入口卡(档位) — 黄描边切角块 =====
-function TierBadge({ label, hasKey }: { label: string; hasKey?: boolean }) {
-  const base = label.split(' ')[0].split('+')[0].toLowerCase()
-  const isNone = base === 'none'
-  const desc = isNone && !hasKey ? '配置 Key 解锁更多能力' : (TIER_DESC[base] ?? TIER_DESC.none)
-  // none 档显示英文「None」,无 label 时也显示「None」
-  const displayLabel = (isNone ? 'None' : (label || 'None')).toUpperCase()
+// ===== Followin 入口卡(实时数据源) — 黄描边切角块 =====
+function FollowinBadge({ enabled, hasKey }: { enabled?: boolean; hasKey?: boolean }) {
+  const active = !!enabled && !!hasKey
+  const desc = !hasKey
+    ? '未配置 · 点此接入实时数据'
+    : !enabled
+      ? '已关闭 · 点此启用数据源'
+      : '实时行情 · 新闻 · 信号'
+  const badge = !hasKey ? '未配置' : enabled ? '已启用' : '已关闭'
 
   return (
     <NavLink
-      to="/settings?tab=account"
-      title="API 设置"
+      to="/settings?tab=followin"
+      title="Followin 实时数据源"
       className="group block"
       style={{
         display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px',
@@ -209,13 +203,15 @@ function TierBadge({ label, hasKey }: { label: string; hasKey?: boolean }) {
         clipPath: clipBR(9), textDecoration: 'none',
       }}
     >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={NEON} strokeWidth="2" strokeLinecap="square" style={{ flex: 'none' }}>
-        <path d="M3 17l5.5-6 4 3.5L21 6" />
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={NEON} strokeWidth="2" strokeLinecap="round" style={{ flex: 'none' }}>
+        <path d="M4 11a9 9 0 0 1 9 9" />
+        <path d="M4 4a16 16 0 0 1 16 16" />
+        <circle cx="5" cy="19" r="1.4" fill={NEON} stroke="none" />
       </svg>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 1, flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 700, color: TXT_TITLE, letterSpacing: 1 }}>
-          TICKFLOW
-          {hasKey && (
+          FOLLOWIN
+          {active && (
             <span
               className="animate-pulse"
               style={{ width: 5, height: 5, background: NEON, boxShadow: '0 0 6px rgba(213,240,33,.8)' }}
@@ -227,12 +223,12 @@ function TierBadge({ label, hasKey }: { label: string; hasKey?: boolean }) {
       <span
         className="shrink-0"
         style={{
-          fontFamily: MONO, fontSize: 9, fontWeight: 700, color: NEON,
-          border: '1px solid rgba(213,240,33,.5)', padding: '1px 6px',
+          fontFamily: MONO, fontSize: 9, fontWeight: 700, color: active ? NEON : TXT_WEAK,
+          border: `1px solid ${active ? 'rgba(213,240,33,.5)' : 'rgba(150,150,120,.35)'}`, padding: '1px 6px',
           maxWidth: 68, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}
       >
-        {displayLabel}
+        {badge}
       </span>
       <Settings className="h-[13px] w-[13px] shrink-0 text-[#6a6754] group-hover:text-[#d5f021] transition-colors" />
     </NavLink>
@@ -459,9 +455,9 @@ export function Layout() {
 
           {/* ===== 入口卡 ×2 ===== */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-            <TierBadge
-              label={caps?.label ?? ''}
-              hasKey={settingsState?.mode !== 'none'}
+            <FollowinBadge
+              enabled={settingsState?.followin_enabled ?? true}
+              hasKey={settingsState?.has_followin_key}
             />
             <AIConfigBadge
               configured={settingsState?.ai_configured ?? settingsState?.has_ai_key}
