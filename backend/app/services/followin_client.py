@@ -202,11 +202,14 @@ def console_query(tool: str, query: str, mode: str = "standard",
         args.update({
             "query": q,
             "search_depth": "quick" if mode == "quick" else "standard",
+            # 默认只取最近 1 天, 否则 followin 按相关度会捞出几个月/去年的旧文
+            "time_range": "1d",
             "limit": 15, "verbosity": "standard",
         })
     elif tool == "signal":
         kw = _tickers(q)
-        args.update({"query": q, "limit": 15, "verbosity": "standard"})
+        # 信号频率低于新闻, 取最近一周; 同样避免返回过期信号
+        args.update({"query": q, "time_range": "1w", "limit": 15, "verbosity": "standard"})
         if kw:
             args["keywords"] = kw
     elif tool == "metrics":
