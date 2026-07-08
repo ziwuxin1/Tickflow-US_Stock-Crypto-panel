@@ -46,6 +46,28 @@ const TOOL_META: Record<ToolId, { label: string; icon: any; ph: string }> = {
   signal: { label: '信号', icon: Radar, ph: '问信号 — 例如:NVDA KOL 喊单 / 佩洛西 交易 / 13F 持仓' },
 }
 
+// 小白引导: 按工具 + 当前标的生成一组「点了就搜」的自然语言问题(不用懂术语)
+function suggestFor(tool: ToolId, disp: string): string[] {
+  if (tool === 'news') return [
+    `${disp} 最新消息`,
+    `${disp} 今天为什么涨/跌?`,
+    '今天市场有什么大新闻?',
+    '美联储 / 宏观 最新动态',
+  ]
+  if (tool === 'signal') return [
+    `${disp} 大户和 KOL 怎么看?`,
+    `${disp} 内部人最近有买卖吗?`,
+    `谁在买 ${disp}?`,
+    `${disp} 机构(13F)持仓变化`,
+  ]
+  return [
+    `${disp} 现在多少钱?`,
+    `${disp} 估值贵不贵?`,
+    `${disp} 最新财报怎么样?`,
+    `${disp} 分析师目标价`,
+  ]
+}
+
 export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
   open: boolean
   onClose: () => void
@@ -82,9 +104,9 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
     })
   }
 
-  const send = async () => {
+  const send = async (override?: string) => {
     if (!active) return
-    const q = active.input.trim() || (name ? `${name} ${symbol}` : symbol)
+    const q = (override ?? active.input).trim() || (name ? `${name} ${symbol}` : symbol)
     const tool = active.tool
     const userMsg: Msg = { id: uid(), role: 'user', tool, text: q }
     const botMsg: Msg = { id: uid(), role: 'followin', tool, loading: true }
@@ -103,6 +125,7 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
   }
 
   const anyLoading = active?.msgs.some(m => m.loading)
+  const disp = name || symbol.replace(/\.US$/i, '')
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -150,13 +173,20 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
 
         {/* 对话流 */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-          {active.msgs.length === 0 && <EmptyHint />}
+          {active.msgs.length === 0 && <EmptyHint tool={active.tool} disp={disp} onPick={q => send(q)} />}
           {active.msgs.map(m => (
             m.role === 'user'
               ? <UserBubble key={m.id} msg={m} />
               : <BotBubble key={m.id} msg={m} />
           ))}
         </div>
+
+        {/* 常驻推荐问题(点了就搜, 小白友好) */}
+        {active.msgs.length > 0 && (
+          <div className="px-4 pt-2 shrink-0">
+            <SuggestChips tool={active.tool} disp={disp} onPick={q => send(q)} compact />
+          </div>
+        )}
 
         {/* 输入区 */}
         <div className="px-4 py-3 border-t border-[rgba(94,242,228,.15)] shrink-0 space-y-2">
@@ -378,15 +408,34 @@ function ItemsView({ data }: { data: any }) {
   )
 }
 
-function EmptyHint() {
+function EmptyHint({ tool, disp, onPick }: { tool: ToolId; disp: string; onPick: (q: string) => void }) {
   return (
-    <div className="h-full flex flex-col items-center justify-center text-center gap-2 py-10">
+    <div className="h-full flex flex-col items-center justify-center text-center gap-3 py-8">
       <Radio className="h-8 w-8 text-[#5ef2e4]/40" />
-      <div className="text-sm text-secondary">在下方选工具、输入问题,开始一段 Followin 检索对话</div>
+      <div className="text-sm text-secondary">不知道问什么?点下面的问题直接搜 👇</div>
       <div className="text-[11px] text-muted max-w-sm leading-relaxed">
-        新闻检索(快讯/研报/推特) · 指标(现价/财务三表/估值/目标价) · 信号(KOL 喊单/内部人/13F)。
-        右上「+」可像浏览器一样开多个会话。
+        先在下方选「新闻检索 / 决策工具」,再点一个问题(也可自己输入)。右上「+」可像浏览器一样开多个会话。
       </div>
+      <SuggestChips tool={tool} disp={disp} onPick={onPick} />
+    </div>
+  )
+}
+
+/** 小白引导: 按工具+标的生成「点了就搜」的问题气泡 */
+function SuggestChips({ tool, disp, onPick, compact }: { tool: ToolId; disp: string; onPick: (q: string) => void; compact?: boolean }) {
+  const list = suggestFor(tool, disp)
+  return (
+    <div className={`flex flex-wrap gap-1.5 ${compact ? '' : 'justify-center max-w-lg mt-1'}`}>
+      {!compact && <span className="w-full text-[10px] text-muted/60 mb-0.5">试试这些「{TOOL_META[tool].label}」问题:</span>}
+      {list.map(q => (
+        <button
+          key={q}
+          onClick={() => onPick(q)}
+          className="inline-flex items-center px-2.5 py-1 rounded-full border border-[rgba(94,242,228,.3)] bg-[rgba(94,242,228,.05)] text-[11px] text-[#8ff5e8] hover:bg-[rgba(94,242,228,.15)] transition-colors"
+        >
+          {q}
+        </button>
+      ))}
     </div>
   )
 }
