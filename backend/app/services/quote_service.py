@@ -228,6 +228,13 @@ class QuoteService:
     @classmethod
     def realtime_mode(cls) -> str:
         """当前实时行情模式: none / watchlist / full_market。"""
+        # Followin 数据源激活时(关 TickFlow + 开 Followin): 强制自选模式, 配额不支持全市场
+        try:
+            from app.services import followin_client
+            if followin_client.is_active():
+                return "watchlist"
+        except Exception:  # noqa: BLE001
+            pass
         tier = cls._current_tier()
         if tier == "none":
             return "none"
@@ -243,7 +250,10 @@ class QuoteService:
         TickFlow 数据源总开关关闭时, 一律不允许实时行情(总开关优先级最高)。
         """
         try:
-            from app.services import preferences
+            from app.services import followin_client, preferences
+            # Followin 数据源激活 → 由 Followin 供实时报价, 允许
+            if followin_client.is_active():
+                return True
             if not preferences.get_tickflow_enabled():
                 return False
         except Exception:
@@ -526,17 +536,26 @@ class QuoteService:
 
         records: list[dict] = []
         if include_us and stock_symbols:
-            from app.tickflow.client import get_paid_realtime_client
-
-            tf = get_paid_realtime_client()
-            if tf is None:
-                logger.warning("自选实时拉取跳过:未配置付费服务器 API Key")
+            from app.services import followin_client
+            if followin_client.is_active():
+                # Followin 数据源: 逐只取 metrics 快照(配额有限, 已限自选前 5 只)
+                for sym in stock_symbols:
+                    try:
+                        records.append(self._followin_quote_record(sym))
+                    except followin_client.FollowinError as e:
+                        logger.warning("followin 自选报价 %s 失败: %s", sym, e)
             else:
-                try:
-                    resp = tf.quotes.get(symbols=stock_symbols) or []
-                    records = [self._parse_quote_record(q) for q in resp]
-                except Exception as e:
-                    logger.warning("自选实时拉取失败: %s", e)
+                from app.tickflow.client import get_paid_realtime_client
+
+                tf = get_paid_realtime_client()
+                if tf is None:
+                    logger.warning("自选实时拉取跳过:未配置付费服务器 API Key")
+                else:
+                    try:
+                        resp = tf.quotes.get(symbols=stock_symbols) or []
+                        records = [self._parse_quote_record(q) for q in resp]
+                    except Exception as e:
+                        logger.warning("自选实时拉取失败: %s", e)
 
         crypto_records: list[dict] = []
         if include_crypto and crypto_symbols:
@@ -618,6 +637,37 @@ class QuoteService:
             "turnover_rate": ext.get("turnover_rate"),
             "timestamp": q.get("timestamp"),
             "session": q.get("session"),
+        }
+
+    @staticmethod
+    def _followin_quote_record(symbol: str) -> dict:
+        """Followin metrics 报价 → 与 _parse_quote_record 一致的 record dict。"""
+        from app.services import followin_client
+        q = followin_client.quote(symbol)
+        last_price = q.get("price")
+        prev_close = q.get("prev_close")
+        change_amount = change_pct = None
+        if last_price is not None and prev_close not in (None, 0):
+            change_amount = float(last_price) - float(prev_close)
+            change_pct = change_amount / float(prev_close) * 100
+        volume = q.get("volume")
+        amount = (float(last_price) * float(volume)) if (last_price is not None and volume is not None) else None
+        return {
+            "symbol": symbol,
+            "name": q.get("name"),
+            "last_price": last_price,
+            "prev_close": prev_close,
+            "open": q.get("open"),
+            "high": q.get("high"),
+            "low": q.get("low"),
+            "volume": volume,
+            "amount": amount,
+            "change_pct": change_pct,
+            "change_amount": change_amount,
+            "amplitude": None,
+            "turnover_rate": None,
+            "timestamp": int(time.time() * 1000),
+            "session": None,
         }
 
     def _known_crypto_symbols(self) -> set[str]:

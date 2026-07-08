@@ -99,6 +99,30 @@ def sync_daily_batch(symbols: list[str],
     (走各自的 sync_crypto_daily)。
     """
     from app.config import settings
+    from app.services import followin_client
+    if followin_client.is_active() or settings.us_data_source == "followin":
+        # Followin 数据源: 逐只调 metrics 取日K。配额有限(1000/天), 单批截断保护。
+        _FL_MAX = 50
+        pull = symbols
+        if len(symbols) > _FL_MAX:
+            logger.warning(
+                "followin 数据源单批限 %d 只(配额保护), 已截断 %d→%d; 全市场请勿用 Followin 源。",
+                _FL_MAX, len(symbols), _FL_MAX,
+            )
+            pull = symbols[:_FL_MAX]
+        fl_out: list[pl.DataFrame] = []
+        for sym in pull:
+            try:
+                rows = followin_client.daily_kline(sym, limit=count or 250)
+            except followin_client.FollowinError as e:
+                logger.warning("followin daily %s failed: %s", sym, e)
+                continue
+            sub = pl.DataFrame(rows).with_columns(pl.lit(sym).alias("symbol"))
+            fl_out.append(_normalize_daily(sub, default_symbol=sym))
+        if on_chunk_done:
+            on_chunk_done(1, 1)
+        return pl.concat(fl_out, how="diagonal_relaxed") if fl_out else pl.DataFrame()
+
     if settings.us_data_source == "yfinance":
         from app.data_providers import yfinance_provider
         # Yahoo 逐只拉取且易限流/封 IP: 全市场(约 1.1 万只)硬拉不可行。超阈值截断并告警,

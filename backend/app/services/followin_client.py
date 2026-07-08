@@ -28,6 +28,23 @@ class FollowinError(RuntimeError):
     """Followin 取数失败(未配置 / 鉴权失败 / 协议错误 / 无数据)。"""
 
 
+def is_active() -> bool:
+    """当前是否应把行情数据源切到 Followin。
+
+    规则: TickFlow 数据源总开关关闭 + Followin 已启用且已配置 key。
+    即「关掉 TickFlow 且开着 Followin」时, 行情/日K 改由 Followin 供数。
+    """
+    try:
+        from app.services import preferences
+        if preferences.get_tickflow_enabled():
+            return False
+        if not preferences.get_followin_enabled():
+            return False
+        return bool(secrets_store.get_followin_key())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _headers(session_id: str | None = None) -> dict:
     key = secrets_store.get_followin_key()
     if not key:
