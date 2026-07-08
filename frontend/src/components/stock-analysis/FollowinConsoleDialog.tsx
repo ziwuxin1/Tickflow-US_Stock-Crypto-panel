@@ -395,10 +395,37 @@ function extractItems(data: any): { title?: string; meta?: string; body?: string
   if (!arr) return []
   return arr.slice(0, 25).map((o: any) => ({
     title: pick(o, ['title', 'headline', 'name', 'symbol', 'ticker', 'text']),
-    meta: [pick(o, ['source', 'author', 'exchange', 'category', 'side', 'period']), pick(o, ['date', 'time', 'published_at', 'timestamp', 'acceptedDate', 'created_at'])]
-      .filter(Boolean).join(' · ') || undefined,
+    meta: [
+      pick(o, ['source_name', 'source', 'author', 'exchange', 'category', 'side']),
+      fmtTime(pickRaw(o, ['published_ts', 'timestamp', 'time', 'date', 'published_at', 'acceptedDate', 'created_at', 'updated_at'])),
+    ].filter(Boolean).join(' · ') || undefined,
     body: pick(o, ['content', 'summary', 'description', 'body', 'text', 'reason']) || compactNums(o),
   }))
+}
+
+/** 取原始值(数字或字符串, 不转 String) */
+function pickRaw(o: any, keys: string[]): any {
+  for (const k of keys) {
+    const v = o?.[k]
+    if (v != null && v !== '') return v
+  }
+  return undefined
+}
+
+/** 时间字段格式化: 支持 epoch 秒/毫秒 与可读日期字符串 → 「MM-DD HH:mm」 */
+function fmtTime(v: any): string | undefined {
+  if (v == null || v === '') return undefined
+  let ms: number | null = null
+  const n = typeof v === 'number' ? v : (/^\d+$/.test(String(v)) ? Number(v) : NaN)
+  if (isFinite(n)) ms = n > 1e12 ? n : n > 1e9 ? n * 1000 : null
+  if (ms == null) {
+    const t = Date.parse(String(v))
+    if (isFinite(t)) ms = t
+  }
+  if (ms == null) return String(v)
+  try {
+    return new Date(ms).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  } catch { return undefined }
 }
 
 function findFirstObjectArray(node: any, depth = 0): any[] | null {
