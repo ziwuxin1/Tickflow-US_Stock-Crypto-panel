@@ -201,6 +201,21 @@ def _looks_crypto(text: str) -> bool:
     return any(w in (text or "") or w in low for w in _CRYPTO_WORDS)
 
 
+def _signal_categories(q: str) -> list[str]:
+    """按提问意图选信号类别, 让不同问题返回不同数据(否则都一样)。"""
+    low = (q or "").lower()
+    cats: list[str] = []
+    if any(w in q for w in ("内部人", "高管")) or "insider" in low or "form 4" in low or "form4" in low:
+        cats.append("insider_trading")
+    if any(w in q for w in ("机构", "13F", "13f")) or "institution" in low:
+        cats.append("institutional")
+    if any(w in q for w in ("喊单", "观点", "怎么看", "看多", "看空", "共识")) or "kol" in low or "consensus" in low:
+        cats.append("kol_call")
+    if any(w in q for w in ("仓位", "大户", "谁在买", "多空", "情绪")) or "position" in low:
+        cats.append("trader_position")
+    return list(dict.fromkeys(cats))
+
+
 def console_query(tool: str, query: str, mode: str = "standard",
                   asset_type: str = "", timeout: float = 45.0) -> dict:
     """Followin 控制台查询(前端对话框用): tool ∈ news / metrics / signal。
@@ -228,10 +243,13 @@ def console_query(tool: str, query: str, mode: str = "standard",
         args.update({"query": q, "time_range": "1w", "limit": 15, "verbosity": "standard"})
         if kw:
             args["keywords"] = kw
+        cats = _signal_categories(q)
         if crypto:
-            # 加密无 SEC Form4/13F, 只看 KOL 喊单 + 交易员仓位;
+            # 加密无 SEC Form4/13F, 只保留 KOL 喊单 + 交易员仓位;
             # 否则 followin 会拿「BTC」去匹配无关的旧内部人/机构披露(2013/2021 年)
-            args["categories"] = ["kol_call", "trader_position"]
+            cats = [c for c in cats if c in ("kol_call", "trader_position")] or ["kol_call", "trader_position"]
+        if cats:
+            args["categories"] = cats
     elif tool == "metrics":
         kw = _tickers(q)
         # 关键: followin 对中文原文召回极差(常返回 null), 强制 categories 也易空返回。

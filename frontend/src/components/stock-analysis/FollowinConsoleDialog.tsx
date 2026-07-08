@@ -53,25 +53,40 @@ const TOOL_META: Record<ToolId, { label: string; icon: any; ph: string }> = {
   signal: { label: '信号', icon: Radar, ph: '问信号 — 例如:NVDA KOL 喊单 / 佩洛西 交易 / 13F 持仓' },
 }
 
-// 小白引导: 按工具 + 当前标的生成一组「点了就搜」的自然语言问题(不用懂术语)
-function suggestFor(tool: ToolId, disp: string): string[] {
+const CRYPTO_SYMS = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'LINK', 'DOT', 'MATIC', 'TON', 'TRX', 'LTC', 'BCH', 'SHIB', 'PEPE', 'USDT', 'USDC', 'WIF']
+function isCryptoName(s: string): boolean {
+  const up = (s || '').toUpperCase()
+  return CRYPTO_SYMS.some(c => up.includes(c)) || /比特币|以太坊|加密|狗狗/.test(s || '')
+}
+
+// 小白引导: 按工具 + 加密/股票 + 当前标的生成「点了就搜」的自然语言问题(不用懂术语)
+function suggestFor(tool: ToolId, disp: string, crypto: boolean): string[] {
   if (tool === 'news') return [
     `${disp} 最新消息`,
     `${disp} 今天为什么涨/跌?`,
     '今天市场有什么大新闻?',
-    '美联储 / 宏观 最新动态',
+    crypto ? '加密市场有什么热点?' : '美联储 / 宏观 最新动态',
   ]
-  if (tool === 'signal') return [
-    `${disp} 大户和 KOL 怎么看?`,
-    `${disp} 内部人最近有买卖吗?`,
-    `谁在买 ${disp}?`,
-    `${disp} 机构(13F)持仓变化`,
-  ]
+  if (tool === 'signal') {
+    // 加密没有 SEC 内部人/13F, 只问 KOL/大户/仓位/情绪
+    if (crypto) return [
+      `${disp} 大户和 KOL 怎么看?`,
+      `${disp} 谁在喊单?`,
+      `${disp} 交易员多空仓位`,
+      `${disp} 市场情绪如何?`,
+    ]
+    return [
+      `${disp} 内部人最近有买卖吗?`,
+      `${disp} 机构(13F)持仓变化`,
+      `${disp} KOL / 分析师怎么看?`,
+      `谁在买 ${disp}?`,
+    ]
+  }
   return [
     `${disp} 现在多少钱?`,
-    `${disp} 估值贵不贵?`,
-    `${disp} 最新财报怎么样?`,
-    `${disp} 分析师目标价`,
+    crypto ? `${disp} 技术面怎么样?` : `${disp} 估值贵不贵?`,
+    crypto ? `${disp} 最近走势` : `${disp} 最新财报怎么样?`,
+    crypto ? `${disp} 关键支撑压力` : `${disp} 分析师目标价`,
   ]
 }
 
@@ -431,7 +446,7 @@ function EmptyHint({ tool, disp, onPick }: { tool: ToolId; disp: string; onPick:
 
 /** 小白引导: 按工具+标的生成「点了就搜」的问题气泡 */
 function SuggestChips({ tool, disp, onPick, compact }: { tool: ToolId; disp: string; onPick: (q: string) => void; compact?: boolean }) {
-  const list = suggestFor(tool, disp)
+  const list = suggestFor(tool, disp, isCryptoName(disp))
   return (
     <div className={`flex flex-wrap gap-1.5 ${compact ? '' : 'justify-center max-w-lg mt-1'}`}>
       {!compact && <span className="w-full text-[10px] text-muted/60 mb-0.5">试试这些「{TOOL_META[tool].label}」问题:</span>}
