@@ -240,6 +240,31 @@ async def followin_console(req: FollowinConsoleRequest) -> dict:
     return {"tool": req.tool, "data": data}
 
 
+class FollowinAgentRequest(BaseModel):
+    question: str
+    symbol: str = ""
+    name: str = ""
+
+
+@router.post("/followin-agent")
+async def followin_agent_ep(req: FollowinAgentRequest) -> dict:
+    """Followin AI 智能体作答: spawn claude -p + Followin MCP, 综合成 markdown(耗时数分钟)。"""
+    if not req.question.strip():
+        raise HTTPException(400, "问题不能为空")
+    from app.services import preferences
+    if not preferences.get_followin_enabled():
+        raise HTTPException(400, "Followin 数据源已关闭,请在「设置 → Followin」启用")
+    from app.services.stock_predictor import followin_agent
+    try:
+        answer = await followin_agent(req.question, req.symbol, req.name)
+        return {"answer": answer}
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.exception("followin agent failed")
+        raise HTTPException(502, f"AI 分析失败: {e}") from e
+
+
 # ================================================================
 # 报告 CRUD(历史报告持久化)
 # ================================================================

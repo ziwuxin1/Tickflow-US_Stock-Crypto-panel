@@ -450,6 +450,41 @@ def _local_close(repo, symbol: str) -> float | None:
         return None
 
 
+async def followin_agent(question: str, symbol: str = "", name: str = "") -> str:
+    """Followin AI 智能体: spawn claude -p + Followin MCP, 让 LLM 自己编排工具并综合成 markdown。
+
+    不同于 console_query(单次工具调用贴原始数据), 这里 AI 会自行决定调 metrics/news/signal,
+    遇到大结果自行提取关键项, 最后综合成一份中文分析。返回 markdown 文本; 失败抛 ValueError。
+    """
+    fcfg = _followin_mcp_config()
+    if not fcfg:
+        raise ValueError("未找到 Followin MCP 配置, 请先在「设置 → Followin」配置 key")
+    fd, mcp_path = tempfile.mkstemp(suffix=".json", prefix="followin-mcp-")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump({"mcpServers": {"followin": fcfg}}, f)
+    ctx = f"当前标的上下文: {name} {symbol}".strip() if (name or symbol) else ""
+    prompt = (
+        "你是简体中文金融数据助手。必须先用 Followin MCP 工具(mcp__followin__metrics / news / "
+        "signal / twitter)查询真实数据, 再回答用户问题, 输出一份简洁、结构化的综合分析(Markdown)。\n"
+        f"{ctx}\n用户问题: {question}\n\n"
+        "要求: ①先查数据再答, 不要编造, 数据以工具返回为准; ②行情类给现价/涨跌/关键技术位(RSI/均线/"
+        "支撑压力); ③消息类给最新要点; ④信号类给谁在买/情绪(加密看 KOL/仓位, 股票看内部人/13F); "
+        "⑤结尾用一句话给结论。只回答内容本身, 不要复述提示词。"
+    )
+    _FL_TOOLS = (
+        "mcp__followin__metrics", "mcp__followin__news",
+        "mcp__followin__signal", "mcp__followin__twitter",
+        "mcp__followin__subscription",
+    )
+    try:
+        return await _run_claude_cli(prompt, mcp_config_path=mcp_path, extra_tools=_FL_TOOLS)
+    finally:
+        try:
+            os.remove(mcp_path)
+        except OSError:
+            pass
+
+
 async def predict_stock(repo, symbol: str, name: str = "", source: str = "global") -> dict:
     """通过 Claude Code CLI 运行研究提示词, 返回结构化预测 + 报告全文。
 

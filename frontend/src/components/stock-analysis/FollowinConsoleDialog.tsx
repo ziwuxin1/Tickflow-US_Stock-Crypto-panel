@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Radio, Search, Loader2, Newspaper, BarChart3, Radar, X, Zap, Gauge, Plus,
-  TrendingUp, TrendingDown, Activity,
+  TrendingUp, TrendingDown, Activity, Sparkles,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 
@@ -20,7 +20,9 @@ interface Msg {
   role: 'user' | 'followin'
   tool: ToolId
   text?: string          // 用户提问
-  data?: any             // followin 结果
+  data?: any             // followin 结果(快速取数)
+  answer?: string        // AI 智能体综合作答(markdown)
+  ai?: boolean           // 是否 AI 分析模式的消息
   error?: string
   loading?: boolean
 }
@@ -33,6 +35,7 @@ interface TabState {
   input: string
   msgs: Msg[]
   subject?: string  // 最近一次提问认出的实体(BTC/NVDA…), 供推荐问题跟随
+  aiMode?: boolean  // AI 分析(智能体综合) vs 快速取数(单次工具原始数据)
 }
 
 /** 从提问里认出实体: 优先大写 ticker(BTC/NVDA), 认不出返回 undefined */
@@ -135,7 +138,8 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
     const q = (ctx && !subjectOf(raw) && !raw.includes(ctx)) ? `${ctx} ${raw}` : raw
     const tool = active.tool
     const userMsg: Msg = { id: uid(), role: 'user', tool, text: raw }
-    const botMsg: Msg = { id: uid(), role: 'followin', tool, loading: true }
+    const ai = !!active.aiMode
+    const botMsg: Msg = { id: uid(), role: 'followin', tool, loading: true, ai }
     patch(active.id, t => ({
       ...t,
       input: '',
@@ -144,8 +148,13 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
       msgs: [...t.msgs, userMsg, botMsg],
     }))
     try {
-      const r = await api.followinConsole({ tool, query: q, mode: active.mode })
-      patch(active.id, t => ({ ...t, msgs: t.msgs.map(m => (m.id === botMsg.id ? { ...m, loading: false, data: r.data } : m)) }))
+      if (ai) {
+        const r = await api.followinAgent({ question: q, symbol, name })
+        patch(active.id, t => ({ ...t, msgs: t.msgs.map(m => (m.id === botMsg.id ? { ...m, loading: false, answer: r.answer } : m)) }))
+      } else {
+        const r = await api.followinConsole({ tool, query: q, mode: active.mode })
+        patch(active.id, t => ({ ...t, msgs: t.msgs.map(m => (m.id === botMsg.id ? { ...m, loading: false, data: r.data } : m)) }))
+      }
     } catch (e: any) {
       patch(active.id, t => ({ ...t, msgs: t.msgs.map(m => (m.id === botMsg.id ? { ...m, loading: false, error: String(e?.message ?? '查询失败') } : m)) }))
     }
@@ -217,6 +226,12 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
 
         {/* 输入区 */}
         <div className="px-4 py-3 border-t border-[rgba(94,242,228,.15)] shrink-0 space-y-2">
+          {/* 模式: 快速取数(秒回原始数据) / AI 分析(智能体综合, 慢) */}
+          <div className="flex items-center gap-2">
+            <ModeBtn active={!active.aiMode} onClick={() => patch(active.id, t => ({ ...t, aiMode: false }))} icon={Zap} label="快速取数" hint="秒回·原始数据" />
+            <ModeBtn active={!!active.aiMode} onClick={() => patch(active.id, t => ({ ...t, aiMode: true }))} icon={Sparkles} label="AI 分析" hint="AI 自动调工具综合·慢" />
+          </div>
+          {!active.aiMode && (
           <div className="flex items-center gap-2 flex-wrap">
             {/* 主类目: 新闻检索 / 决策工具(与旧版一致) */}
             <GroupBtn active={active.tool === 'news'} onClick={() => patch(active.id, t => ({ ...t, tool: 'news' }))} icon={Newspaper} label="新闻检索" />
@@ -235,6 +250,7 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
               </>
             )}
           </div>
+          )}
           <div className="flex gap-2">
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted/50" />
@@ -242,7 +258,7 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
                 value={active.input}
                 onChange={e => patch(active.id, t => ({ ...t, input: e.target.value }))}
                 onKeyDown={e => { if (e.key === 'Enter' && !anyLoading) send() }}
-                placeholder={TOOL_META[active.tool].ph}
+                placeholder={active.aiMode ? '问任何问题, AI 自动调 Followin 工具综合分析…' : TOOL_META[active.tool].ph}
                 className="w-full h-10 pl-9 pr-3 rounded-xl bg-[rgba(255,255,255,.04)] border border-[rgba(94,242,228,.25)] text-sm text-foreground placeholder:text-muted/40 focus:outline-none focus:border-[#5ef2e4]/60 transition-colors"
               />
             </div>
@@ -258,6 +274,17 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
         </div>
       </div>
     </div>
+  )
+}
+
+function ModeBtn({ active, onClick, icon: Icon, label, hint }: { active: boolean; onClick: () => void; icon: any; label: string; hint: string }) {
+  return (
+    <button onClick={onClick} className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+      active ? 'bg-[#5ef2e4] text-[#062120]' : 'text-secondary border border-border/40 hover:text-foreground'
+    }`}>
+      <Icon className="h-3.5 w-3.5" />{label}
+      <span className={`text-[9px] ${active ? 'text-[#062120]/60' : 'text-muted/50'}`}>{hint}</span>
+    </button>
   )
 }
 
@@ -298,9 +325,14 @@ function BotBubble({ msg }: { msg: Msg }) {
     <div className="flex justify-start">
       <div className="max-w-[92%] rounded-2xl rounded-bl-sm bg-[rgba(255,255,255,.03)] border border-border/40 px-3.5 py-2.5 w-full">
         {msg.loading ? (
-          <div className="flex items-center gap-2 text-xs text-muted py-1"><Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在从 Followin 检索…</div>
+          <div className="flex items-center gap-2 text-xs text-muted py-1">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {msg.ai ? 'AI 正在调 Followin 工具查数据并综合分析…(约 1–3 分钟)' : '正在从 Followin 检索…'}
+          </div>
         ) : msg.error ? (
           <div className="text-xs text-danger">{msg.error}</div>
+        ) : msg.answer != null ? (
+          <div className="text-[12px] leading-relaxed text-secondary whitespace-pre-wrap">{msg.answer}</div>
         ) : (
           <ResultView tool={msg.tool} data={msg.data} />
         )}

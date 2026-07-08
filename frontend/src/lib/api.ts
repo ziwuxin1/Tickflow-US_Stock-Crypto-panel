@@ -1431,6 +1431,13 @@ export const api = {
       body: JSON.stringify(params),
     }),
 
+  /** Followin AI 智能体: 让 claude 自己调 Followin 工具综合作答(markdown, 耗时数分钟) */
+  followinAgent: (params: { question: string; symbol?: string; name?: string }) =>
+    request<{ answer: string }>('/api/stock-analysis/followin-agent', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
   stockAnalysisReportsList: () =>
     request<{ reports: AiStockReport[] }>('/api/stock-analysis/reports'),
 
