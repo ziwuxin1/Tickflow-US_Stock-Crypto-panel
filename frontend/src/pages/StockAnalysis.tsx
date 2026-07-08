@@ -342,6 +342,7 @@ function StockAnalysisBoard({ symbol, name, onOpenPreview }: {
   // AI 自动预测: 结构化点位(画线) + 可视化报告面板
   const [pred, setPred] = useState<PredictResponse | null>(null)
   const [predLoading, setPredLoading] = useState(false)
+  const [predSource, setPredSource] = useState<'global' | 'followin'>('global')
   const [followinConsoleOpen, setFollowinConsoleOpen] = useState(false)
   const { data: settings } = useSettings()
   const followinOn = settings?.followin_enabled ?? true
@@ -354,6 +355,7 @@ function StockAnalysisBoard({ symbol, name, onOpenPreview }: {
 
   const runPredict = async (source: 'global' | 'followin' = 'global') => {
     if (predLoading) return
+    setPredSource(source)
     setPredLoading(true)
     try {
       const r = await api.stockPredict(symbol, name ?? '', source)
@@ -515,7 +517,7 @@ function StockAnalysisBoard({ symbol, name, onOpenPreview }: {
           aiPatterns={pred?.prediction.patterns ?? null}
         />
         {/* AI 自动预测可视化报告(生成中显示骨架屏) */}
-        <AiPredictPanel data={pred} loading={predLoading} />
+        <AiPredictPanel data={pred} loading={predLoading} pendingSource={predSource} />
       </div>
       <FollowinConsoleDialog
         open={followinConsoleOpen}

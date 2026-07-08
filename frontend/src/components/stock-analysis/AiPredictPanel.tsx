@@ -5,8 +5,9 @@
  *       风险/机会双列 → 操作建议(持仓/未持仓) → 免责行。
  * 同时导出 predictionToLevels(): 把预测点位转成 K 线图叠加线。
  */
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Loader2, Minus, ShieldAlert, Sparkles, TrendingDown, TrendingUp } from 'lucide-react'
+import { Check, Loader2, Minus, ShieldAlert, Sparkles, TrendingDown, TrendingUp } from 'lucide-react'
 import type { PredictResponse, StockPrediction } from '@/lib/api'
 import type { LevelLine } from '@/components/indices/levelOverlays'
 
@@ -71,10 +72,12 @@ const STANCE_STYLE = {
 interface Props {
   data: PredictResponse | null
   loading: boolean
+  /** 生成中的数据源(决定进度条步骤文案) */
+  pendingSource?: 'global' | 'followin'
 }
 
-export function AiPredictPanel({ data, loading }: Props) {
-  if (loading) return <PanelSkeleton />
+export function AiPredictPanel({ data, loading, pendingSource }: Props) {
+  if (loading) return <PredictProgress source={pendingSource ?? 'global'} />
   if (!data) return null
 
   const p = data.prediction
@@ -235,23 +238,90 @@ export function AiPredictPanel({ data, loading }: Props) {
   )
 }
 
-/** 生成中的骨架屏 */
-function PanelSkeleton() {
+// ===== 生成中: 总进度条 + 分步骤(√ 标记已完成) =====
+
+interface Step { label: string; secs: number }
+
+const STEPS_GLOBAL: Step[] = [
+  { label: '连接 Claude Code CLI', secs: 4 },
+  { label: '拉取全网数据(行情 / 财务 / 研报 / SEC)', secs: 100 },
+  { label: 'AI 综合分析(技术 / 基本面 / 消息面)', secs: 90 },
+  { label: '生成结构化预测点位', secs: 22 },
+  { label: '渲染可视化报告', secs: 6 },
+]
+const STEPS_FOLLOWIN: Step[] = [
+  { label: '连接 Claude Code CLI', secs: 4 },
+  { label: '调用 Followin MCP 抓取实时数据(行情 / 新闻 / 信号)', secs: 130 },
+  { label: 'AI 综合分析(技术 / 基本面 / 消息面)', secs: 90 },
+  { label: '生成结构化预测点位', secs: 22 },
+  { label: '渲染可视化报告', secs: 6 },
+]
+
+function PredictProgress({ source }: { source: 'global' | 'followin' }) {
+  const steps = source === 'followin' ? STEPS_FOLLOWIN : STEPS_GLOBAL
+  const total = steps.reduce((a, s) => a + s.secs, 0)
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    const t = setInterval(() => setElapsed(e => e + 1), 1000)
+    return () => clearInterval(t)
+  }, [])
+
+  // 累计到各步骤结束的秒数,判断当前步 / 已完成步
+  let acc = 0
+  const bounds = steps.map(s => (acc += s.secs))
+  const curIdx = bounds.findIndex(b => elapsed < b)
+  const activeIdx = curIdx === -1 ? steps.length - 1 : curIdx
+  // 总进度封顶 95%(留 5% 给真正返回时的完成态), 估算耗时下用 elapsed/total
+  const pct = Math.min(95, Math.round((elapsed / total) * 100))
+  const mm = String(Math.floor(elapsed / 60)).padStart(2, '0')
+  const ss = String(elapsed % 60).padStart(2, '0')
+  const doneCount = bounds.filter(b => elapsed >= b).length
+
   return (
-    <div className="mt-3 rounded-xl border border-border/50 bg-base/20 px-4 py-4">
-      <div className="flex items-center gap-2 text-[11px] text-[#b18cff] font-medium mb-3">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        Claude Code 正在运行 global-stock-data 技能拉取最新数据并生成报告…(约 2-5 分钟, 可继续浏览其他内容)
+    <div className="mt-3 rounded-xl border border-[#b18cff]/30 bg-base/20 px-4 py-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#b18cff]" />
+        <span className="text-[11px] font-medium text-[#b18cff]">
+          {source === 'followin' ? 'Followin 实时' : 'global-stock-data'} · AI 预测生成中
+        </span>
+        <span className="ml-auto text-[10px] font-mono text-muted">
+          {doneCount}/{steps.length} 步 · {mm}:{ss}
+        </span>
       </div>
-      <div className="space-y-2">
-        {[64, 88, 76].map((w, i) => (
-          <div key={i} className="h-3 rounded bg-white/5 animate-pulse" style={{ width: `${w}%` }} />
-        ))}
-        <div className="grid gap-2 pt-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(128px, 1fr))' }}>
-          {Array.from({ length: 5 }, (_, i) => (
-            <div key={i} className="h-14 rounded-lg bg-white/5 animate-pulse" />
-          ))}
-        </div>
+
+      {/* 总进度条 */}
+      <div className="relative h-2 w-full rounded-full bg-white/8 overflow-hidden mb-3">
+        <motion.div
+          className="absolute inset-y-0 left-0 rounded-full"
+          style={{ background: 'linear-gradient(90deg,#8b6cff,#b18cff)' }}
+          animate={{ width: `${pct}%` }}
+          transition={{ ease: 'linear', duration: 1 }}
+        />
+      </div>
+
+      {/* 子步骤 */}
+      <div className="space-y-1.5">
+        {steps.map((s, i) => {
+          const done = elapsed >= bounds[i]
+          const active = i === activeIdx && !done
+          return (
+            <div key={i} className="flex items-center gap-2 text-[11px]">
+              <span className={`flex h-4 w-4 items-center justify-center rounded-full shrink-0 ${
+                done ? 'bg-[#2ecc80] text-[#05210f]' : active ? 'bg-[#b18cff]/20 text-[#b18cff]' : 'bg-white/8 text-muted'
+              }`}>
+                {done ? <Check className="h-3 w-3" strokeWidth={3} /> : active ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <span className="h-1 w-1 rounded-full bg-current" />}
+              </span>
+              <span className={done ? 'text-secondary' : active ? 'text-foreground font-medium' : 'text-muted'}>
+                {s.label}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="mt-3 text-[10px] text-muted/60">
+        预计 2–5 分钟(Followin 档更久),进度为估算;可切到其他页面,完成后回来查看。
       </div>
     </div>
   )
