@@ -188,6 +188,19 @@ def _tickers(text: str) -> list[str]:
     return list(dict.fromkeys(c for c in cands if c not in _TICKER_STOP))[:5]
 
 
+_CRYPTO_SET = {"BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT",
+               "MATIC", "TON", "TRX", "LTC", "BCH", "SHIB", "PEPE", "USDT", "USDC", "WIF"}
+_CRYPTO_WORDS = ("比特币", "以太坊", "加密", "狗狗币", "山寨", "meme", "crypto")
+
+
+def _looks_crypto(text: str) -> bool:
+    """判断查询是否指向加密资产(供 signal 只查 KOL/仓位、metrics/news 设 asset_type)。"""
+    if set(_TICKER_RE.findall(text or "")) & _CRYPTO_SET:
+        return True
+    low = (text or "").lower()
+    return any(w in (text or "") or w in low for w in _CRYPTO_WORDS)
+
+
 def console_query(tool: str, query: str, mode: str = "standard",
                   asset_type: str = "", timeout: float = 45.0) -> dict:
     """Followin 控制台查询(前端对话框用): tool ∈ news / metrics / signal。
@@ -195,9 +208,12 @@ def console_query(tool: str, query: str, mode: str = "standard",
     返回该工具的原始业务 JSON(results/meta)。失败抛 FollowinError。
     """
     q = (query or "").strip()
+    crypto = _looks_crypto(q)
     args: dict = {}
     if asset_type in ("crypto", "tradfi"):
         args["asset_type"] = asset_type
+    elif crypto:
+        args["asset_type"] = "crypto"  # 认出加密 → 收窄到加密资产, 提升相关度
     if tool == "news":
         args.update({
             "query": q,
@@ -212,6 +228,10 @@ def console_query(tool: str, query: str, mode: str = "standard",
         args.update({"query": q, "time_range": "1w", "limit": 15, "verbosity": "standard"})
         if kw:
             args["keywords"] = kw
+        if crypto:
+            # 加密无 SEC Form4/13F, 只看 KOL 喊单 + 交易员仓位;
+            # 否则 followin 会拿「BTC」去匹配无关的旧内部人/机构披露(2013/2021 年)
+            args["categories"] = ["kol_call", "trader_position"]
     elif tool == "metrics":
         kw = _tickers(q)
         # 关键: followin 对中文原文召回极差(常返回 null), 强制 categories 也易空返回。
