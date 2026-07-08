@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Radio, Search, Loader2, Newspaper, BarChart3, Radar, X, Zap, Gauge, Plus,
-  TrendingUp, TrendingDown,
+  TrendingUp, TrendingDown, Activity,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 
@@ -160,27 +160,21 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
 
         {/* 输入区 */}
         <div className="px-4 py-3 border-t border-[rgba(94,242,228,.15)] shrink-0 space-y-2">
-          <div className="flex items-center gap-2">
-            {(Object.keys(TOOL_META) as ToolId[]).map(id => {
-              const M = TOOL_META[id]
-              const on = active.tool === id
-              return (
-                <button
-                  key={id}
-                  onClick={() => patch(active.id, t => ({ ...t, tool: id }))}
-                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
-                    on ? 'bg-[rgba(94,242,228,.15)] text-[#5ef2e4] border border-[rgba(94,242,228,.4)]' : 'text-muted border border-transparent hover:text-secondary'
-                  }`}
-                >
-                  <M.icon className="h-3 w-3" />{M.label}
-                </button>
-              )
-            })}
-            {active.tool === 'news' && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* 主类目: 新闻检索 / 决策工具(与旧版一致) */}
+            <GroupBtn active={active.tool === 'news'} onClick={() => patch(active.id, t => ({ ...t, tool: 'news' }))} icon={Newspaper} label="新闻检索" />
+            <GroupBtn active={active.tool !== 'news'} onClick={() => patch(active.id, t => ({ ...t, tool: t.tool === 'news' ? 'metrics' : t.tool }))} icon={Radar} label="决策工具" />
+            <div className="h-4 w-px bg-border/40 mx-1" />
+            {/* 子选项: 新闻→快速/标准; 决策工具→指标/信号 */}
+            {active.tool === 'news' ? (
               <>
-                <div className="h-4 w-px bg-border/40 mx-1" />
                 <MiniToggle active={active.mode === 'quick'} onClick={() => patch(active.id, t => ({ ...t, mode: 'quick' }))} icon={Zap} label="快速" />
                 <MiniToggle active={active.mode === 'standard'} onClick={() => patch(active.id, t => ({ ...t, mode: 'standard' }))} icon={Gauge} label="标准" />
+              </>
+            ) : (
+              <>
+                <MiniToggle active={active.tool === 'metrics'} onClick={() => patch(active.id, t => ({ ...t, tool: 'metrics' }))} icon={BarChart3} label="指标" />
+                <MiniToggle active={active.tool === 'signal'} onClick={() => patch(active.id, t => ({ ...t, tool: 'signal' }))} icon={Activity} label="信号" />
               </>
             )}
           </div>
@@ -207,6 +201,16 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
         </div>
       </div>
     </div>
+  )
+}
+
+function GroupBtn({ active, onClick, icon: Icon, label }: { active: boolean; onClick: () => void; icon: any; label: string }) {
+  return (
+    <button onClick={onClick} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+      active ? 'bg-[#5ef2e4] text-[#062120]' : 'text-secondary hover:text-foreground hover:bg-white/5'
+    }`}>
+      <Icon className="h-3.5 w-3.5" />{label}
+    </button>
   )
 }
 
