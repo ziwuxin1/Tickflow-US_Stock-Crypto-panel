@@ -13,7 +13,7 @@ import { CpTopBar } from '@/components/cyberpunk/CpTopBar'
 import { StockLogo } from '@/components/StockLogo'
 import { api, type PredictResponse } from '@/lib/api'
 import { useLastStock } from '@/lib/useLastStock'
-import { useQuoteStatus } from '@/lib/useSharedQueries'
+import { useQuoteStatus, useSettings } from '@/lib/useSharedQueries'
 import { QK } from '@/lib/queryKeys'
 import { toast } from '@/components/Toast'
 import {
@@ -340,6 +340,8 @@ function StockAnalysisBoard({ symbol, name, onOpenPreview }: {
   // AI 自动预测: 结构化点位(画线) + 可视化报告面板
   const [pred, setPred] = useState<PredictResponse | null>(null)
   const [predLoading, setPredLoading] = useState(false)
+  const { data: settings } = useSettings()
+  const followinOn = settings?.followin_enabled ?? true
 
   // 切换标的时清空上一只的预测
   useEffect(() => {
@@ -464,12 +466,14 @@ function StockAnalysisBoard({ symbol, name, onOpenPreview }: {
                     </button>
                     <button
                       type="button"
-                      onClick={() => runPredict('followin')}
-                      className="w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-[rgba(213,240,33,.1)] transition-colors"
+                      disabled={!followinOn}
+                      onClick={() => followinOn && runPredict('followin')}
+                      title={followinOn ? undefined : 'Followin 数据源已在「设置 → Followin」关闭'}
+                      className="w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-[rgba(213,240,33,.1)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                     >
                       <Radio className="h-3.5 w-3.5 text-[#d5f021] mt-0.5 shrink-0" />
                       <span className="flex flex-col">
-                        <span className="text-xs font-medium text-[#d5f021]">Followin 实时</span>
+                        <span className="text-xs font-medium text-[#d5f021]">Followin 实时{!followinOn && ' · 已关闭'}</span>
                         <span className="text-[10px] text-muted leading-tight">同套提示词, 数据由 Followin MCP 实时抓取</span>
                       </span>
                     </button>

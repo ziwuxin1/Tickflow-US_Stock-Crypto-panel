@@ -104,6 +104,11 @@ class Settings(BaseSettings):
         "Chrome/131.0.0.0 Safari/537.36"
     )
 
+    # Followin MCP — 个股 AI 预测「Followin 实时」数据源(实时行情/新闻/信号/推特/订阅)
+    # 端点固定, 用户仅需在「设置 → AI」配置 x-api-key(在 followin.io/zh-Hans/mcp 获取)。
+    followin_mcp_url: str = "https://mcp.followin.io/v2/mcp"
+    followin_api_key: str = ""
+
     # Server
     host: str = "0.0.0.0"
     port: int = 3018

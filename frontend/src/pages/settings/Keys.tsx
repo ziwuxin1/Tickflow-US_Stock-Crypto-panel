@@ -20,6 +20,7 @@ import { api } from '@/lib/api'
 import { useCapabilities, useSettings } from '@/lib/useSharedQueries'
 import { QK } from '@/lib/queryKeys'
 import { CAP_LABELS, tierTextStyle, tierStyle, tierBaseName, ALL_TIERS, TierTag } from '@/lib/capability-labels'
+import { MasterSwitch } from './MasterSwitch'
 
 // ===== 导出为 Panel 组件 (由 Settings.tsx 嵌入) =====
 
@@ -64,12 +65,30 @@ export function SettingsKeysPanel() {
     },
   })
 
+  const tickflowEnabled = settings.data?.tickflow_enabled ?? true
+  const toggleTickflow = useMutation({
+    mutationFn: (v: boolean) => api.setTickflowEnabled(v),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QK.settings })
+      qc.invalidateQueries({ queryKey: QK.preferences })
+    },
+  })
+
   const mode = settings.data?.mode
   const masked = settings.data?.tickflow_api_key_masked
   const capCount = caps.data ? Object.keys(caps.data.capabilities).length : 0
 
   return (
     <>
+      <div className="max-w-5xl mb-6">
+        <MasterSwitch
+          enabled={tickflowEnabled}
+          pending={toggleTickflow.isPending}
+          onChange={(v) => toggleTickflow.mutate(v)}
+          label="启用 TickFlow 数据源"
+          hint="关闭后立即停用实时行情(看板/自选实时刷新会停止);历史日 K 不受影响。重新启用后需在「实时监控」开启实时行情。"
+        />
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.3fr] gap-6 max-w-5xl">
         {/* ========== 左列: Key 配置 ========== */}
         <div className="space-y-6">

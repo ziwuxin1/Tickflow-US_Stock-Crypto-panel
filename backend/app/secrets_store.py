@@ -77,6 +77,15 @@ def get_ai_key() -> str:
     return settings.ai_api_key or ""
 
 
+def get_followin_key() -> str:
+    """取 Followin MCP 的 x-api-key:secrets.json 优先,否则 .env/config。"""
+    val = load().get("followin_api_key")
+    if val:
+        return val
+    from app.config import settings
+    return settings.followin_api_key or ""
+
+
 def get_ai_config(key: str, default: str = "") -> str:
     """取 AI 配置项:secrets.json 优先,否则 config。"""
     val = load().get(key)

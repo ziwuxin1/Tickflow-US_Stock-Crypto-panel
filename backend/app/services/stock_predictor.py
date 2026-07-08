@@ -157,11 +157,22 @@ def _find_claude() -> str | None:
 
 
 def _followin_mcp_config() -> dict | None:
-    """从用户 ~/.claude.json 读取 followin MCP 服务器配置(含鉴权头)。
+    """构造 followin MCP 服务器配置(含鉴权头)。
 
+    优先用应用内「设置 → AI」保存的 x-api-key(secrets.json)按固定端点组装;
+    找不到再回退读取用户 ~/.claude.json 里已连接的 followin 配置。
     仅在运行时读取, 不落库、不写入仓库; 供 followin 数据源 spawn claude 时按需加载。
-    先看顶层 mcpServers, 再扫各 project 的 mcpServers。找不到返回 None。
     """
+    from app import secrets_store
+    from app.config import settings
+    key = secrets_store.get_followin_key()
+    if key:
+        return {
+            "type": "http",
+            "url": settings.followin_mcp_url,
+            "headers": {"x-api-key": key},
+        }
+    # 回退: 用户 ~/.claude.json 里已连接的 followin(先看顶层 mcpServers, 再扫各 project)
     try:
         data = json.loads((Path.home() / ".claude.json").read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001

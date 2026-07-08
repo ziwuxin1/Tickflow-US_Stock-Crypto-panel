@@ -240,7 +240,14 @@ class QuoteService:
         """当前是否允许使用实时行情。
 
         TickFlow 档位非 none 即允许; none 档(无 key)仍可拉加密实时(Binance 免 key)。
+        TickFlow 数据源总开关关闭时, 一律不允许实时行情(总开关优先级最高)。
         """
+        try:
+            from app.services import preferences
+            if not preferences.get_tickflow_enabled():
+                return False
+        except Exception:
+            pass
         if cls.realtime_mode() != "none":
             return True
         return cls._crypto_realtime_enabled()

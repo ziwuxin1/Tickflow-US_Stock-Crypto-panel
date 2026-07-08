@@ -193,6 +193,10 @@ async def predict(request: Request, req: PredictRequest):
     if not req.symbol:
         raise HTTPException(400, "symbol 不能为空")
     source = req.source if req.source in ("global", "followin") else "global"
+    if source == "followin":
+        from app.services import preferences
+        if not preferences.get_followin_enabled():
+            raise HTTPException(400, "Followin 数据源已关闭,请在「设置 → Followin」启用后再试")
     from app.services.stock_predictor import predict_stock
 
     try:

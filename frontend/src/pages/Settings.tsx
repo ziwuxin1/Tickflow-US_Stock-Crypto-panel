@@ -5,9 +5,10 @@
  */
 import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { BarChart3, Key, Radio, SlidersHorizontal, Sparkles, Settings2, Zap } from 'lucide-react'
+import { BarChart3, Key, Radio, Rss, SlidersHorizontal, Sparkles, Settings2, Zap } from 'lucide-react'
 import { SettingsKeysPanel } from './settings/Keys'
 import { SettingsAIPanel } from './settings/AI'
+import { SettingsFollowinPanel } from './settings/Followin'
 import { SettingsMonitoringPanel } from './settings/Monitoring'
 import { SettingsExtPagesPanel } from './settings/ExtPages'
 import { SettingsMenuSettingsPanel } from './settings/MenuSettings'
@@ -19,6 +20,7 @@ import { cn } from '@/lib/cn'
 // ===== Tab 定义 =====
 
 const TABS = [
+  { key: 'followin',   label: 'Followin',   icon: Rss,       panel: SettingsFollowinPanel },
   { key: 'account',    label: 'TickFlow',   icon: Key,       panel: SettingsKeysPanel },
   { key: 'ai',         label: 'AI 设置',    icon: Sparkles,  panel: SettingsAIPanel },
   { key: 'monitoring', label: '实时监控',   icon: Radio,     panel: SettingsMonitoringPanel },

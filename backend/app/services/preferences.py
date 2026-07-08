@@ -413,6 +413,28 @@ def set_system_notify_enabled(enabled: bool) -> bool:
     return bool(enabled)
 
 
+def get_followin_enabled() -> bool:
+    """Followin 数据源总开关(个股 AI 预测「Followin 实时」)。默认启用。"""
+    return load().get("followin_enabled", True)
+
+
+def set_followin_enabled(enabled: bool) -> bool:
+    """保存 Followin 数据源总开关。"""
+    save({"followin_enabled": bool(enabled)})
+    return bool(enabled)
+
+
+def get_tickflow_enabled() -> bool:
+    """TickFlow 数据源总开关(实时行情)。默认启用;关闭则停用实时行情。"""
+    return load().get("tickflow_enabled", True)
+
+
+def set_tickflow_enabled(enabled: bool) -> bool:
+    """保存 TickFlow 数据源总开关。"""
+    save({"tickflow_enabled": bool(enabled)})
+    return bool(enabled)
+
+
 def get_feishu_webhook_url() -> str:
     """飞书自定义机器人 Webhook 地址 — 全局共用一处, 所有启用推送的规则都推到这一个群。"""
     return load().get("feishu_webhook_url", "")

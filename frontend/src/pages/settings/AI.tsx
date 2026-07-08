@@ -3,11 +3,12 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Save, Loader2, Check, Wifi, WifiOff, Eye, EyeOff, Shield,
   Shuffle, Plug, Zap, Settings2, ExternalLink, Trash2,
-  Terminal,
+  Terminal, Radio,
 } from 'lucide-react'
 import { useSettings } from '@/lib/useSharedQueries'
 import { api, type SettingsState } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
+import { MasterSwitch } from './MasterSwitch'
 
 // 统一的输入框样式(与项目其他设置页一致)
 const INPUT_CLS =
@@ -388,6 +389,171 @@ export function SettingsAIPanel() {
         </div>
       )}
     </div>
+  )
+}
+
+// ===== Followin 实时数据源(个股 AI 预测「Followin 实时」数据源)=====
+
+const FOLLOWIN_TOOLS: { name: string; desc: string }[] = [
+  { name: 'metrics', desc: '实时行情 / OHLCV / 技术指标 / 基本面(评级·目标价·财报日历·同业)' },
+  { name: 'news', desc: '新闻 / 评论 / 研报 / 推特 / 媒体' },
+  { name: 'signal', desc: '谁在买 · KOL 喊单 / 大户 / 内部人 / 13F 机构持仓' },
+  { name: 'twitter', desc: '指定账号 / 推文的原始 Twitter 操作' },
+  { name: 'subscription', desc: '自选订阅 / 提醒 / 监控 KOL 喊单标的' },
+]
+
+export function FollowinCard({ s }: { s?: SettingsState }) {
+  const qc = useQueryClient()
+  const configured = !!s?.has_followin_key
+  const [apiKey, setApiKey] = useState('')
+  const [showKey, setShowKey] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [confirmClear, setConfirmClear] = useState(false)
+  const enabled = s?.followin_enabled ?? true
+
+  const toggleEnabled = useMutation({
+    mutationFn: (v: boolean) => api.setFollowinEnabled(v),
+    onSuccess: (r) => {
+      qc.setQueryData<SettingsState>(QK.settings, prev => prev ? { ...prev, followin_enabled: r.followin_enabled } : prev)
+      qc.invalidateQueries({ queryKey: QK.settings })
+    },
+  })
+
+  const save = useMutation({
+    mutationFn: () => api.saveFollowinKey(apiKey.trim()),
+    onSuccess: (r) => {
+      if (!r.ok) { setResult({ ok: false, msg: r.error ?? '保存失败' }); return }
+      setResult({ ok: true, msg: r.message ?? '已保存并连通' })
+      setApiKey('')
+      qc.setQueryData<SettingsState>(QK.settings, prev => prev ? {
+        ...prev, has_followin_key: true, followin_api_key_masked: r.followin_api_key_masked ?? prev.followin_api_key_masked,
+      } : prev)
+      qc.invalidateQueries({ queryKey: QK.settings })
+    },
+    onError: (e: any) => setResult({ ok: false, msg: String(e?.message ?? '保存失败') }),
+  })
+
+  const clear = useMutation({
+    mutationFn: () => api.clearFollowinKey(),
+    onSuccess: () => {
+      setConfirmClear(false)
+      setResult(null)
+      qc.setQueryData<SettingsState>(QK.settings, prev => prev ? {
+        ...prev, has_followin_key: false, followin_api_key_masked: '',
+      } : prev)
+      qc.invalidateQueries({ queryKey: QK.settings })
+    },
+  })
+
+  const handleTest = async () => {
+    setTesting(true)
+    setResult(null)
+    try {
+      const r = await api.testFollowinKey(apiKey.trim())
+      setResult({ ok: r.ok, msg: r.ok ? (r.message ?? '连通成功') : (r.error ?? '连通失败') })
+    } catch (e: any) {
+      setResult({ ok: false, msg: String(e?.message ?? '测试失败') })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <Card
+      icon={Radio}
+      title="Followin 实时数据"
+      right={
+        <span className={`inline-flex items-center gap-1.5 text-[10px] ${configured ? 'text-emerald-400' : 'text-muted/60'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${configured ? 'bg-emerald-400' : 'bg-muted/40'}`} />
+          {configured ? `已配置 · ${s?.followin_api_key_masked}` : '未配置'}
+        </span>
+      }
+    >
+      <div className="space-y-4">
+        <MasterSwitch
+          enabled={enabled}
+          pending={toggleEnabled.isPending}
+          onChange={(v) => toggleEnabled.mutate(v)}
+          label="启用 Followin 数据源"
+          hint="关闭后,个股「AI 自动预测」将隐藏「Followin 实时」入口,后端拒绝该数据源。"
+        />
+        <p className="text-[11px] text-muted leading-relaxed">
+          用于个股分析「AI 自动预测 → Followin 实时」数据源:同一套研究提示词,数据改由 Followin MCP 实时抓取。
+          在 <a href="https://followin.io/zh-Hans/mcp" target="_blank" rel="noreferrer" className="text-accent hover:underline inline-flex items-center gap-0.5">followin.io/zh-Hans/mcp<ExternalLink className="h-3 w-3" /></a> 获取 API Key(端点固定,仅需填 x-api-key)。
+        </p>
+
+        <Field label="Followin API Key（x-api-key）">
+          <div className="flex gap-2">
+            <div className="flex-1 relative">
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
+                placeholder={configured ? `${s?.followin_api_key_masked} · 留空不修改` : '粘贴 x-api-key'}
+                className={`${INPUT_CLS} pr-9`}
+              />
+              <button onClick={() => setShowKey(v => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted/40 hover:text-muted" tabIndex={-1} aria-label={showKey ? '隐藏' : '显示'}>
+                {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+            <button onClick={handleTest} disabled={testing || (!apiKey.trim() && !configured)} className="h-9 px-3 rounded-lg border border-border/50 text-xs text-secondary hover:text-accent hover:border-accent/30 disabled:opacity-40 transition-all flex items-center gap-1.5 shrink-0">
+              {testing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
+              测试
+            </button>
+          </div>
+        </Field>
+
+        {result && (
+          <div className={`rounded-btn border px-3 py-2 text-xs flex items-center gap-2 ${result.ok ? 'border-emerald-400/20 bg-emerald-400/[0.04] text-emerald-400' : 'border-danger/20 bg-danger/[0.04] text-danger'}`}>
+            <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${result.ok ? 'bg-emerald-400' : 'bg-danger'}`} />
+            {result.msg}
+          </div>
+        )}
+
+        <div className="rounded-btn border border-border/30 bg-base/30 px-3 py-2.5">
+          <div className="text-[10px] text-muted/50 uppercase tracking-wider mb-1.5">集成的 MCP 功能 · 5 项</div>
+          <div className="space-y-1">
+            {FOLLOWIN_TOOLS.map(t => (
+              <div key={t.name} className="flex items-baseline gap-2 text-[11px] leading-relaxed">
+                <span className="font-mono text-accent/80 shrink-0">{t.name}</span>
+                <span className="text-secondary">{t.desc}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex gap-2">
+          <button onClick={() => save.mutate()} disabled={save.isPending || !apiKey.trim()} className="flex-1 h-9 rounded-lg bg-accent text-white text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-accent/90 disabled:opacity-40 transition-all">
+            {save.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            {save.isPending ? '校验并保存中...' : '保存 Key'}
+          </button>
+          {configured && (
+            <button onClick={() => setConfirmClear(true)} disabled={clear.isPending} className="h-9 px-3 rounded-lg bg-elevated text-secondary hover:text-danger text-xs flex items-center gap-1.5 hover:bg-elevated/80 disabled:opacity-50 transition-all shrink-0">
+              <Trash2 className="h-3.5 w-3.5" /> 清除
+            </button>
+          )}
+        </div>
+      </div>
+
+      {confirmClear && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setConfirmClear(false)} />
+          <div className="relative w-[90vw] max-w-[380px] rounded-card border border-border bg-base shadow-2xl p-6">
+            <h3 className="text-sm font-medium text-foreground mb-2">清除 Followin API Key</h3>
+            <p className="text-xs text-secondary mb-5 leading-relaxed">
+              清除后,个股预测「Followin 实时」将回退读取本机 ~/.claude.json 里已连接的 followin 配置(若有)。
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <button onClick={() => setConfirmClear(false)} className="px-3 py-1.5 rounded-btn bg-elevated text-secondary hover:bg-elevated/80 text-sm transition-colors">取消</button>
+              <button onClick={() => clear.mutate()} disabled={clear.isPending} className="px-3 py-1.5 rounded-btn bg-danger/15 text-danger hover:bg-danger/25 text-sm font-medium transition-colors disabled:opacity-50">
+                {clear.isPending ? '清除中...' : '确认'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Card>
   )
 }
 

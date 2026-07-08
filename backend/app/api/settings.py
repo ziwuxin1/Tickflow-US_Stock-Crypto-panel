@@ -77,6 +77,12 @@ def get_settings() -> dict:
         "ai_model": current_ai_model(),
         "ai_codex_command": current_codex_command(),
         "ai_user_agent": secrets_store.get_ai_config("ai_user_agent", settings.ai_user_agent),
+        # Followin MCP 实时数据源(个股 AI 预测「Followin 实时」)
+        "has_followin_key": bool(secrets_store.get_followin_key()),
+        "followin_api_key_masked": secrets_store.mask(secrets_store.get_followin_key()),
+        # 数据源总开关
+        "followin_enabled": preferences.get_followin_enabled(),
+        "tickflow_enabled": preferences.get_tickflow_enabled(),
     }
 
 
@@ -304,6 +310,121 @@ def clear_ai_settings() -> dict:
     settings.ai_codex_command = "codex"
 
     return {"ok": True}
+
+
+# ===== Followin MCP 实时数据源 =====
+
+class FollowinKeyIn(BaseModel):
+    api_key: str = ""
+
+
+async def _probe_followin(key: str) -> tuple[bool, str]:
+    """向 Followin MCP 端点发一次 initialize 握手, 判定 x-api-key 是否有效。
+
+    MCP streamable-HTTP: POST JSON-RPC initialize, Accept 同时声明 json 与 event-stream。
+    <400 视为连通; 401/403 视为鉴权失败; 其它/异常视为不可达。不保存, 纯探测。
+    """
+    import httpx
+    from app.config import settings
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "alphaflow", "version": "1.0"},
+        },
+    }
+    headers = {
+        "x-api-key": key,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp = await client.post(settings.followin_mcp_url, json=payload, headers=headers)
+    except (httpx.HTTPError, OSError) as e:
+        return False, f"无法连接 Followin MCP: {e}"
+    if resp.status_code in (401, 403):
+        return False, "API Key 无效或无权限(鉴权失败)"
+    if resp.status_code >= 400:
+        return False, f"Followin MCP 返回 HTTP {resp.status_code}"
+    return True, "连通成功 · 实时行情/新闻/信号/推特/订阅 已可用"
+
+
+@router.post("/followin-key")
+async def save_followin_key(req: FollowinKeyIn) -> dict:
+    """保存 Followin MCP 的 x-api-key(个股 AI 预测「Followin 实时」数据源)。
+
+    先探后存: 通过 MCP initialize 握手校验 key, 鉴权失败/不可达则不保存。
+    保存后, 个股预测 followin 档会用此 key 连 Followin MCP, 复用其全部工具
+    (metrics / news / signal / twitter / subscription)。
+    """
+    key = req.api_key.strip()
+    if not key:
+        return {"ok": False, "error": "key empty"}
+    ok, msg = await _probe_followin(key)
+    if not ok:
+        return {"ok": False, "error": msg}
+    from app.config import settings
+    secrets_store.save({"followin_api_key": key})
+    settings.followin_api_key = key
+    return {
+        "ok": True,
+        "has_followin_key": True,
+        "followin_api_key_masked": secrets_store.mask(key),
+        "message": msg,
+    }
+
+
+@router.post("/followin-test")
+async def test_followin_key(req: FollowinKeyIn) -> dict:
+    """测试 Followin MCP x-api-key 连通性(不保存)。留空则测已保存的 key。"""
+    key = req.api_key.strip() or secrets_store.get_followin_key()
+    if not key:
+        return {"ok": False, "error": "未配置 Followin API Key"}
+    ok, msg = await _probe_followin(key)
+    return {"ok": ok, "message": msg} if ok else {"ok": False, "error": msg}
+
+
+@router.delete("/followin-key")
+def clear_followin_key() -> dict:
+    """清除 Followin MCP x-api-key。清除后个股预测 followin 档回退读 ~/.claude.json。"""
+    from app.config import settings
+    secrets_store.clear("followin_api_key")
+    settings.followin_api_key = ""
+    return {"ok": True, "has_followin_key": False}
+
+
+# ===== 数据源总开关(Followin / TickFlow)=====
+
+class DataSourceToggleIn(BaseModel):
+    enabled: bool
+
+
+@router.put("/followin-enabled")
+def set_followin_enabled(req: DataSourceToggleIn) -> dict:
+    """Followin 数据源总开关。关闭后个股预测拒绝 source=followin, 前端隐藏该入口。"""
+    from app.services import preferences
+    v = preferences.set_followin_enabled(req.enabled)
+    return {"ok": True, "followin_enabled": v}
+
+
+@router.put("/tickflow-enabled")
+def set_tickflow_enabled(req: DataSourceToggleIn, request: Request) -> dict:
+    """TickFlow 数据源总开关。关闭 → 立即停用实时行情服务(历史日K不受影响)。"""
+    from app.services import preferences
+    v = preferences.set_tickflow_enabled(req.enabled)
+    qs = getattr(request.app.state, "quote_service", None)
+    if qs and not v:
+        # 关闭数据源: 立刻停掉正在跑的实时行情轮询
+        try:
+            qs.disable()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("disable quote_service on tickflow off failed: %s", e)
+    return {"ok": True, "tickflow_enabled": v}
 
 
 # ===== 偏好设置 =====

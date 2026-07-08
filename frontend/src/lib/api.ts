@@ -633,6 +633,12 @@ export interface SettingsState {
   ai_model: string
   ai_codex_command?: string
   ai_user_agent: string
+  // Followin MCP 实时数据源(个股 AI 预测「Followin 实时」)
+  has_followin_key?: boolean
+  followin_api_key_masked?: string
+  // 数据源总开关
+  followin_enabled?: boolean
+  tickflow_enabled?: boolean
 }
 
 /** 保存 TickFlow Key 的响应(先探后存) */
@@ -751,6 +757,36 @@ export const api = {
   /** 一键清空 AI 配置(保留自定义 UA) */
   clearAiSettings: () =>
     request<{ ok: boolean }>('/api/settings/ai', { method: 'DELETE' }),
+
+  /** 保存 Followin MCP x-api-key(先探后存, 鉴权失败不保存) */
+  saveFollowinKey: (api_key: string) =>
+    request<{ ok: boolean; error?: string; message?: string; has_followin_key?: boolean; followin_api_key_masked?: string }>(
+      '/api/settings/followin-key',
+      { method: 'POST', body: JSON.stringify({ api_key }) },
+    ),
+
+  /** 测试 Followin MCP 连通性(不保存; 留空测已存 key) */
+  testFollowinKey: (api_key = '') =>
+    request<{ ok: boolean; error?: string; message?: string }>(
+      '/api/settings/followin-test',
+      { method: 'POST', body: JSON.stringify({ api_key }) },
+    ),
+
+  /** 清除 Followin MCP x-api-key */
+  clearFollowinKey: () =>
+    request<{ ok: boolean; has_followin_key?: boolean }>('/api/settings/followin-key', { method: 'DELETE' }),
+
+  /** Followin 数据源总开关 */
+  setFollowinEnabled: (enabled: boolean) =>
+    request<{ ok: boolean; followin_enabled: boolean }>('/api/settings/followin-enabled', {
+      method: 'PUT', body: JSON.stringify({ enabled }),
+    }),
+
+  /** TickFlow 数据源总开关(关闭即停用实时行情) */
+  setTickflowEnabled: (enabled: boolean) =>
+    request<{ ok: boolean; tickflow_enabled: boolean }>('/api/settings/tickflow-enabled', {
+      method: 'PUT', body: JSON.stringify({ enabled }),
+    }),
 
   preferences: () => request<Preferences>('/api/settings/preferences'),
   updateMinuteSync: (enabled: boolean, days: number) =>
