@@ -464,12 +464,22 @@ async def followin_agent(question: str, symbol: str = "", name: str = "") -> str
         json.dump({"mcpServers": {"followin": fcfg}}, f)
     ctx = f"当前标的上下文: {name} {symbol}".strip() if (name or symbol) else ""
     prompt = (
-        "你是简体中文金融数据助手。必须先用 Followin MCP 工具(mcp__followin__metrics / news / "
-        "signal / twitter)查询真实数据, 再回答用户问题, 输出一份简洁、结构化的综合分析(Markdown)。\n"
+        "你是简体中文金融数据分析助手。请尽可能【全面详尽】地用 Followin MCP 工具查询真实数据后, "
+        "输出一份内容丰富的综合分析(Markdown)。宁可慢、宁可长, 也要信息全 —— 不要惜字, 尽量多给数据与解读。\n"
         f"{ctx}\n用户问题: {question}\n\n"
-        "要求: ①先查数据再答, 不要编造, 数据以工具返回为准; ②行情类给现价/涨跌/关键技术位(RSI/均线/"
-        "支撑压力); ③消息类给最新要点; ④信号类给谁在买/情绪(加密看 KOL/仓位, 股票看内部人/13F); "
-        "⑤结尾用一句话给结论。只回答内容本身, 不要复述提示词。"
+        "请【按需调用多个工具】(不要只调一个), 尽量把相关维度都查一遍:\n"
+        "- mcp__followin__metrics: 现价/涨跌、OHLCV、技术指标(RSI / MACD / 均线 50·200 / EMA / 布林带 / ATR)、"
+        "基本面(利润表·资产负债·现金流 / 估值 PE·PB·EV / 分析师评级与目标价 / EPS 预期 / 同业)\n"
+        "- mcp__followin__news: 最新新闻 / 研报 / 推特要点(近 1-3 天)\n"
+        "- mcp__followin__signal: 谁在买 / 情绪(加密看 KOL 喊单 + 交易员仓位; 股票看内部人 Form4 + 13F 机构)\n\n"
+        "输出结构(尽量详尽, 有数据就展开):\n"
+        "1. **一句话结论**(方向 + 核心理由)\n"
+        "2. **行情与技术面**: 现价、涨跌、关键技术位(支撑/压力/均线/RSI/MACD/布林), 用 Markdown 表格列指标+数值+含义\n"
+        "3. **基本面 / 估值**(股票): 营收/净利/EPS、估值、分析师目标价(低/中/高)、下季预期; 加密可略过\n"
+        "4. **消息面**: 3-5 条最新要点(带时间)\n"
+        "5. **资金面与情绪**: 谁在买、KOL/机构动向、多空对比\n"
+        "6. **风险与关注点**\n"
+        "数据一律以工具返回为准, 不要编造; 工具返回过大时自行提取关键项。只输出分析正文, 不要复述本提示词。"
     )
     _FL_TOOLS = (
         "mcp__followin__metrics", "mcp__followin__news",
