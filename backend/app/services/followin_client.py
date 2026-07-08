@@ -175,12 +175,17 @@ def _num(v) -> float | None:
 
 import re as _re
 
-_TICKER_RE = _re.compile(r"\b[A-Z]{1,6}\b")
+# 大写 2-6 字母, 两侧不接 ASCII 字母(\b 对 CJK 无效: "NVDA今天" 里 NVDA 后无边界)
+_TICKER_RE = _re.compile(r"(?<![A-Za-z0-9])[A-Z]{2,6}(?![A-Za-z])")
+_TICKER_STOP = {"US", "USD", "USDT", "ETF", "AI", "IPO", "CEO", "CFO", "IT", "OK", "A", "I",
+                "THE", "AND", "FOR", "PE", "PB", "EV", "GDP", "CPI"}
 
 
 def _tickers(text: str) -> list[str]:
-    """从查询里粗提取可能的 ticker(大写 1-6 字母),供 metrics/signal 用。"""
-    return list(dict.fromkeys(_TICKER_RE.findall((text or "").upper())))[:5]
+    """从查询里粗提取 ticker —— 只取原文里本就大写的 token(真 ticker),
+    不整体 upper(否则英文小写词如 quote/price 会被误当 ticker)。去噪后返回。"""
+    cands = _TICKER_RE.findall(text or "")
+    return list(dict.fromkeys(c for c in cands if c not in _TICKER_STOP))[:5]
 
 
 def console_query(tool: str, query: str, mode: str = "standard",
@@ -206,7 +211,9 @@ def console_query(tool: str, query: str, mode: str = "standard",
             args["keywords"] = kw
     elif tool == "metrics":
         kw = _tickers(q)
-        args.update({"query": q or "comprehensive analysis", "limit": 10, "verbosity": "detail"})
+        # 原样传 query(followin 能从中英文里自解析实体), 追加轻量英文角度偏向行情;
+        # 不强制 categories(实测强制易触发空返回)。识别到 ticker 再补 keywords。
+        args.update({"query": f"{q} price quote fundamentals".strip(), "limit": 10, "verbosity": "detail"})
         if kw:
             args["keywords"] = kw
     else:
