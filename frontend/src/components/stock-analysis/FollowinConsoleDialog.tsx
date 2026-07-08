@@ -12,6 +12,7 @@ import {
   TrendingUp, TrendingDown, Activity, Sparkles,
 } from 'lucide-react'
 import { api } from '@/lib/api'
+import { Markdown } from '@/components/Markdown'
 
 type ToolId = 'news' | 'metrics' | 'signal'
 
@@ -332,7 +333,7 @@ function BotBubble({ msg }: { msg: Msg }) {
         ) : msg.error ? (
           <div className="text-xs text-danger">{msg.error}</div>
         ) : msg.answer != null ? (
-          <div className="text-[12px] leading-relaxed text-secondary whitespace-pre-wrap">{msg.answer}</div>
+          <Markdown>{msg.answer}</Markdown>
         ) : (
           <ResultView tool={msg.tool} data={msg.data} />
         )}
