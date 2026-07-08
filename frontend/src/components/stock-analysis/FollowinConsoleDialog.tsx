@@ -32,6 +32,13 @@ interface TabState {
   mode: 'quick' | 'standard'
   input: string
   msgs: Msg[]
+  subject?: string  // 最近一次提问认出的实体(BTC/NVDA…), 供推荐问题跟随
+}
+
+/** 从提问里认出实体: 优先大写 ticker(BTC/NVDA), 认不出返回 undefined */
+function subjectOf(text: string): string | undefined {
+  const m = (text || '').match(/(?<![A-Za-z])[A-Z]{2,6}(?![A-Za-z])/)
+  return m ? m[0] : undefined
 }
 
 // 跨「开关对话框」保留会话(页面内内存缓存)
@@ -114,6 +121,7 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
       ...t,
       input: '',
       title: t.msgs.length === 0 ? q.slice(0, 14) : t.title,
+      subject: subjectOf(q) ?? t.subject,  // 认出实体则更新, 供推荐问题跟随
       msgs: [...t.msgs, userMsg, botMsg],
     }))
     try {
@@ -173,7 +181,7 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
 
         {/* 对话流 */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-          {active.msgs.length === 0 && <EmptyHint tool={active.tool} disp={disp} onPick={q => send(q)} />}
+          {active.msgs.length === 0 && <EmptyHint tool={active.tool} disp={active.subject || disp} onPick={q => send(q)} />}
           {active.msgs.map(m => (
             m.role === 'user'
               ? <UserBubble key={m.id} msg={m} />
@@ -184,7 +192,7 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
         {/* 常驻推荐问题(点了就搜, 小白友好) */}
         {active.msgs.length > 0 && (
           <div className="px-4 pt-2 shrink-0">
-            <SuggestChips tool={active.tool} disp={disp} onPick={q => send(q)} compact />
+            <SuggestChips tool={active.tool} disp={active.subject || disp} onPick={q => send(q)} compact />
           </div>
         )}
 
