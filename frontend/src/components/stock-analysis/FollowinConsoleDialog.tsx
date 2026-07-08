@@ -128,14 +128,18 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
 
   const send = async (override?: string) => {
     if (!active) return
-    const q = (override ?? active.input).trim() || (name ? `${name} ${symbol}` : symbol)
+    const raw = (override ?? active.input).trim() || (name ? `${name} ${symbol}` : symbol)
+    // 跟进问题常没写实体(如「现在预测是多少?」), followin 无实体会返回空 → 自动补当前实体
+    const pageTicker = subjectOf(symbol) || symbol.replace(/\.[A-Za-z]+$/, '')
+    const ctx = active.subject || pageTicker
+    const q = (ctx && !subjectOf(raw) && !raw.includes(ctx)) ? `${ctx} ${raw}` : raw
     const tool = active.tool
-    const userMsg: Msg = { id: uid(), role: 'user', tool, text: q }
+    const userMsg: Msg = { id: uid(), role: 'user', tool, text: raw }
     const botMsg: Msg = { id: uid(), role: 'followin', tool, loading: true }
     patch(active.id, t => ({
       ...t,
       input: '',
-      title: t.msgs.length === 0 ? q.slice(0, 14) : t.title,
+      title: t.msgs.length === 0 ? raw.slice(0, 14) : t.title,
       subject: subjectOf(q) ?? t.subject,  // 认出实体则更新, 供推荐问题跟随
       msgs: [...t.msgs, userMsg, botMsg],
     }))
@@ -338,7 +342,8 @@ function MetricsView({ data }: { data: any }) {
   const fund = data?.results?.fundamentals?.concise?.[0]
   const lq = fund?.latest_quarter
   const tc = fund?.consensus_price
-  const hasAny = snap || hist || lq || tc
+  const ne = fund?.next_earnings_estimate
+  const hasAny = snap || hist || lq || tc || ne
 
   if (!hasAny) return <ItemsView data={data} />
 
@@ -397,6 +402,15 @@ function MetricsView({ data }: { data: any }) {
             <Kv k="低" v={tc.targetLow} />
             <Kv k="中位" v={tc.targetMedian ?? tc.targetConsensus} />
             <Kv k="高" v={tc.targetHigh} />
+          </div>
+        </div>
+      )}
+      {ne && (
+        <div className="rounded-lg border border-border/40 bg-white/[0.02] px-2.5 py-2">
+          <div className="text-[10px] font-semibold text-[#5ef2e4] mb-1">下季预估{ne.date ? `(${ne.date})` : ''}</div>
+          <div className="grid grid-cols-2 gap-x-3 text-[11px]">
+            <Kv k="预估 EPS" v={ne.epsEstimated} />
+            <Kv k="预估营收" v={ne.revenueEstimated} fmt />
           </div>
         </div>
       )}
