@@ -211,11 +211,12 @@ def console_query(tool: str, query: str, mode: str = "standard",
             args["keywords"] = kw
     elif tool == "metrics":
         kw = _tickers(q)
-        # 原样传 query(followin 能从中英文里自解析实体), 追加轻量英文角度偏向行情;
-        # 不强制 categories(实测强制易触发空返回)。识别到 ticker 再补 keywords。
-        args.update({"query": f"{q} price quote fundamentals".strip(), "limit": 10, "verbosity": "detail"})
+        # 关键: followin 对中文原文召回极差(常返回 null), 强制 categories 也易空返回。
+        # 识别到 ticker → 用纯英文 query(丢掉中文原文)+ keywords; 否则原样传 q 兜底。
         if kw:
-            args["keywords"] = kw
+            args.update({"query": f"{' '.join(kw)} latest price quote and fundamentals", "keywords": kw, "limit": 10, "verbosity": "detail"})
+        else:
+            args.update({"query": q or "comprehensive analysis", "limit": 10, "verbosity": "detail"})
     else:
         raise FollowinError(f"未知 Followin 工具: {tool}")
     return call_tool(tool, args, timeout=timeout)
