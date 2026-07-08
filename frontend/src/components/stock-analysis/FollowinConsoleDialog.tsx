@@ -220,7 +220,7 @@ export function FollowinConsoleDialog({ open, onClose, symbol, name }: {
               />
             </div>
             <button
-              onClick={send}
+              onClick={() => send()}
               disabled={anyLoading}
               className="h-10 px-5 rounded-xl bg-[#5ef2e4] text-[#062120] text-sm font-bold hover:bg-[#7ff5e8] disabled:opacity-40 transition-colors flex items-center gap-1.5 shrink-0"
             >
