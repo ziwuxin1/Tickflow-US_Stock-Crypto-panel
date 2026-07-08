@@ -178,6 +178,8 @@ class PredictRequest(BaseModel):
     """AI 自动预测请求。"""
     symbol: str
     name: str = ""
+    # 数据源: global = global-stock-data 技能自带抓取; followin = Followin MCP 抓取
+    source: str = "global"
 
 
 @router.post("/predict")
@@ -190,10 +192,11 @@ async def predict(request: Request, req: PredictRequest):
     """
     if not req.symbol:
         raise HTTPException(400, "symbol 不能为空")
+    source = req.source if req.source in ("global", "followin") else "global"
     from app.services.stock_predictor import predict_stock
 
     try:
-        return await predict_stock(request.app.state.repo, req.symbol, req.name)
+        return await predict_stock(request.app.state.repo, req.symbol, req.name, source)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except Exception as e:  # noqa: BLE001

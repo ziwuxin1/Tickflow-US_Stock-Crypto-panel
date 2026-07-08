@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -80,8 +81,12 @@ def _coin_base(symbol: str) -> str:
     return re.sub(r"(USDT|USDC|BUSD)$", "", symbol, flags=re.IGNORECASE)
 
 
-def build_research_prompt(symbol: str, name: str) -> str:
-    """组装 /global-stock-data 研究提示词(与前端 GlobalResearchButton 模板一致) + JSON 附录。"""
+def build_research_prompt(symbol: str, name: str, source: str = "global") -> str:
+    """组装研究提示词(与前端 GlobalResearchButton 模板一致) + JSON 附录。
+
+    source="global": 走 /global-stock-data 技能自带数据抓取(新浪/Yahoo/东财/SEC)。
+    source="followin": 同一套研究要求, 但数据改由 Followin MCP 抓取(mcp__followin__*)。
+    """
     crypto = is_crypto(symbol)
     market = "加密货币" if crypto else "美股"
     tag = _coin_base(symbol) if crypto else f"${symbol.split('.')[0]}"
@@ -90,9 +95,22 @@ def build_research_prompt(symbol: str, name: str) -> str:
         if crypto else ""
     )
     display = f"{name} {tag}".strip() if name else tag
-    return f"""/global-stock-data 我要研究 [{display}]（[市场：{market}]），
-请用 global-stock-data 技能给我一份完整研究报告。
-{crypto_note}
+    if source == "followin":
+        asset_type = "crypto" if crypto else "tradfi"
+        header = (
+            f"我要研究 [{display}]（[市场：{market}]），请给我一份完整研究报告。\n"
+            f"【数据来源 —— 必须用 Followin MCP 抓取 {symbol} 的最新数据(asset_type=\"{asset_type}\")，"
+            "不要用内置爬虫或其它数据源】\n"
+            "- 行情/实时报价/OHLCV历史/技术指标/基本面(含分析师评级与目标价、财报日历、同业) → 调 mcp__followin__metrics\n"
+            "- 新闻/评论/研报/推特/媒体 → 调 mcp__followin__news\n"
+            "- 谁在买(KOL喊单/大户/内部人/13F机构持仓) → 调 mcp__followin__signal\n"
+        )
+    else:
+        header = (
+            f"/global-stock-data 我要研究 [{display}]（[市场：{market}]），\n"
+            "请用 global-stock-data 技能给我一份完整研究报告。\n"
+        )
+    return f"""{header}{crypto_note}
 需要包含：
 1. 公司基本信息（当前股价、涨跌幅、市值、52周高低）
 2. 近期 K 线（最近 6 个月日线）+ 技术指标判断
@@ -138,8 +156,38 @@ def _find_claude() -> str | None:
     return shutil.which("claude")
 
 
-async def _run_claude_cli(prompt: str, timeout: float = _CLI_TIMEOUT) -> str:
-    """headless 运行 `claude -p`, 返回最终文本输出。"""
+def _followin_mcp_config() -> dict | None:
+    """从用户 ~/.claude.json 读取 followin MCP 服务器配置(含鉴权头)。
+
+    仅在运行时读取, 不落库、不写入仓库; 供 followin 数据源 spawn claude 时按需加载。
+    先看顶层 mcpServers, 再扫各 project 的 mcpServers。找不到返回 None。
+    """
+    try:
+        data = json.loads((Path.home() / ".claude.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    top = data.get("mcpServers") or {}
+    if isinstance(top, dict) and top.get("followin"):
+        return top["followin"]
+    for proj in (data.get("projects") or {}).values():
+        servers = (proj or {}).get("mcpServers") or {}
+        if isinstance(servers, dict) and servers.get("followin"):
+            return servers["followin"]
+    return None
+
+
+async def _run_claude_cli(
+    prompt: str,
+    timeout: float = _CLI_TIMEOUT,
+    mcp_config_path: str | None = None,
+    extra_tools: tuple[str, ...] = (),
+) -> str:
+    """headless 运行 `claude -p`, 返回最终文本输出。
+
+    mcp_config_path: 传入时以 --strict-mcp-config + --mcp-config 只加载该文件里的 MCP
+    (followin 数据源用); 不传则不加载任何 MCP(global 数据源, 技能自带抓取)。
+    extra_tools: 追加到 --allowedTools 的工具名(如 followin 的 mcp__followin__* )。
+    """
     exe = _find_claude()
     if not exe:
         raise ValueError("未找到 claude 命令: 请确认本机已安装并登录 Claude Code CLI")
@@ -149,10 +197,13 @@ async def _run_claude_cli(prompt: str, timeout: float = _CLI_TIMEOUT) -> str:
         exe, "-p", "--output-format", "text",
         # 数据抓取类任务用 sonnet 足够, 比用户默认模型快数倍
         "--model", "sonnet",
-        # 跳过全局 MCP 服务器加载: 用户环境往往配置了大量 MCP, 无头运行加载慢且易卡
+        # 严格 MCP: 只加载显式 --mcp-config 里的服务器(followin), 不传则不加载任何 MCP。
+        # 用户环境往往配置了大量 MCP, 无头运行全量加载慢且易卡, 故不继承全局配置。
         "--strict-mcp-config",
-        "--allowedTools", *_ALLOWED_TOOLS,
     ]
+    if mcp_config_path:
+        args += ["--mcp-config", mcp_config_path]
+    args += ["--allowedTools", *_ALLOWED_TOOLS, *extra_tools]
     creationflags = 0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW
 
     # 剥离认证类环境变量: 后端若从 Claude Code 会话启动会继承 ANTHROPIC_API_KEY 等,
@@ -388,13 +439,38 @@ def _local_close(repo, symbol: str) -> float | None:
         return None
 
 
-async def predict_stock(repo, symbol: str, name: str = "") -> dict:
-    """通过 Claude Code CLI 运行 global-stock-data 技能, 返回结构化预测 + 报告全文。
+async def predict_stock(repo, symbol: str, name: str = "", source: str = "global") -> dict:
+    """通过 Claude Code CLI 运行研究提示词, 返回结构化预测 + 报告全文。
 
+    source="global": 走 global-stock-data 技能自带抓取; source="followin": 同套提示词,
+    数据改由 Followin MCP 抓取(运行时从 ~/.claude.json 读取其配置, 临时加载, 用后即删)。
     返回 {"prediction", "report", "close", "generated_at"}; 失败抛 ValueError。
     """
-    prompt = build_research_prompt(symbol, name)
-    text = await _run_claude_cli(prompt)
+    prompt = build_research_prompt(symbol, name, source)
+
+    mcp_path: str | None = None
+    extra_tools: tuple[str, ...] = ()
+    if source == "followin":
+        fcfg = _followin_mcp_config()
+        if not fcfg:
+            raise ValueError("未找到 followin MCP 配置, 请先在 Claude Code 中连接 followin 后重试")
+        fd, mcp_path = tempfile.mkstemp(suffix=".json", prefix="followin-mcp-")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"mcpServers": {"followin": fcfg}}, f)
+        extra_tools = (
+            "mcp__followin__metrics", "mcp__followin__news",
+            "mcp__followin__signal", "mcp__followin__twitter",
+            "mcp__followin__subscription",
+        )
+
+    try:
+        text = await _run_claude_cli(prompt, mcp_config_path=mcp_path, extra_tools=extra_tools)
+    finally:
+        if mcp_path:
+            try:
+                os.remove(mcp_path)
+            except OSError:
+                pass
 
     raw, report = _extract_json(text)
     if raw is None:

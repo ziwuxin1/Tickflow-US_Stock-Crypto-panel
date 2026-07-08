@@ -1380,10 +1380,10 @@ export const api = {
     request<StockLevels>(`/api/stock-analysis/levels?symbol=${encodeURIComponent(symbol)}&days=${days}`),
 
   /** AI 自动预测: 经本机 Claude Code CLI 跑 global-stock-data 技能(耗时数分钟) */
-  stockPredict: (symbol: string, name = '') =>
+  stockPredict: (symbol: string, name = '', source: 'global' | 'followin' = 'global') =>
     request<PredictResponse>('/api/stock-analysis/predict', {
       method: 'POST',
-      body: JSON.stringify({ symbol, name }),
+      body: JSON.stringify({ symbol, name, source }),
     }),
 
   stockAnalysisReportsList: () =>

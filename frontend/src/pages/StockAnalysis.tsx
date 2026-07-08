@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, BrainCircuit, Sparkles, Star, LineChart, History as HistoryIcon, Loader2, ExternalLink, Bell } from 'lucide-react'
+import { ArrowLeft, BrainCircuit, Sparkles, Star, LineChart, History as HistoryIcon, Loader2, ExternalLink, Bell, ChevronDown, Globe, Radio } from 'lucide-react'
 import { EmptyState } from '@/components/EmptyState'
 import { StockFinancialSearch } from '@/components/financials/StockFinancialSearch'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
@@ -347,11 +347,11 @@ function StockAnalysisBoard({ symbol, name, onOpenPreview }: {
     setPredLoading(false)
   }, [symbol])
 
-  const runPredict = async () => {
+  const runPredict = async (source: 'global' | 'followin' = 'global') => {
     if (predLoading) return
     setPredLoading(true)
     try {
-      setPred(await api.stockPredict(symbol, name ?? ''))
+      setPred(await api.stockPredict(symbol, name ?? '', source))
     } catch (e: any) {
       const msg = String(e?.message ?? 'AI 预测失败')
       toast(msg.includes('API Key') || msg.includes('api_key')
@@ -436,15 +436,47 @@ function StockAnalysisBoard({ symbol, name, onOpenPreview }: {
             <ExternalLink className="h-3 w-3 text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
           </button>
           <div className="ml-auto flex items-center gap-3 shrink-0">
-            <button
-              onClick={runPredict}
-              disabled={predLoading}
-              title="AI 基于最新行情与关键价位自动计算进出场/止损/目标点位, 画到K线上并生成可视化报告"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-[rgba(94,242,228,.4)] bg-[rgba(94,242,228,.06)] text-[#5ef2e4] text-xs font-medium hover:bg-[rgba(94,242,228,.12)] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {predLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BrainCircuit className="h-3.5 w-3.5" />}
-              {predLoading ? '预测中…' : 'AI 自动预测'}
-            </button>
+            {/* AI 自动预测: 悬停弹出数据源下拉(全网数据 / Followin 实时) */}
+            <div className="group relative">
+              <button
+                type="button"
+                disabled={predLoading}
+                title="AI 基于最新行情与关键价位自动计算进出场/止损/目标点位, 画到K线上并生成可视化报告(悬停选择数据源)"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-[rgba(94,242,228,.4)] bg-[rgba(94,242,228,.06)] text-[#5ef2e4] text-xs font-medium hover:bg-[rgba(94,242,228,.12)] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {predLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BrainCircuit className="h-3.5 w-3.5" />}
+                {predLoading ? '预测中…' : 'AI 自动预测'}
+                {!predLoading && <ChevronDown className="h-3 w-3 opacity-70 transition-transform group-hover:rotate-180" />}
+              </button>
+              {!predLoading && (
+                <div className="absolute right-0 top-full z-30 hidden w-56 pt-1 group-hover:block">
+                  <div className="border border-[rgba(94,242,228,.4)] bg-[rgba(10,14,13,.97)] shadow-[0_0_20px_rgba(94,242,228,.18)] backdrop-blur-sm">
+                    <button
+                      type="button"
+                      onClick={() => runPredict('global')}
+                      className="w-full flex items-start gap-2 px-3 py-2 text-left border-b border-[rgba(94,242,228,.15)] hover:bg-[rgba(94,242,228,.1)] transition-colors"
+                    >
+                      <Globe className="h-3.5 w-3.5 text-[#5ef2e4] mt-0.5 shrink-0" />
+                      <span className="flex flex-col">
+                        <span className="text-xs font-medium text-[#5ef2e4]">全网数据</span>
+                        <span className="text-[10px] text-muted leading-tight">global-stock-data 技能自带抓取(新浪/Yahoo/东财/SEC)</span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => runPredict('followin')}
+                      className="w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-[rgba(213,240,33,.1)] transition-colors"
+                    >
+                      <Radio className="h-3.5 w-3.5 text-[#d5f021] mt-0.5 shrink-0" />
+                      <span className="flex flex-col">
+                        <span className="text-xs font-medium text-[#d5f021]">Followin 实时</span>
+                        <span className="text-[10px] text-muted leading-tight">同套提示词, 数据由 Followin MCP 实时抓取</span>
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
             <span className="text-[10px] text-muted font-mono">{rows.length} 个交易日</span>
           </div>
         </div>
