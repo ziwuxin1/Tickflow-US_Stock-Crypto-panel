@@ -81,6 +81,9 @@ export function AiPredictPanel({ data, loading }: Props) {
   const close = data.close
   const st = STANCE_STYLE[p.stance] ?? STANCE_STYLE.中性
   const flat = flattenPredLevels(p)
+  const isFollowin = data.source === 'followin'
+  const srcLabel = isFollowin ? 'Followin 实时' : 'global-stock-data'
+  const srcFooter = isFollowin ? 'Followin MCP 实时数据' : 'global-stock-data 技能'
 
   const pct = (v: number) => {
     if (!close) return ''
@@ -214,7 +217,7 @@ export function AiPredictPanel({ data, loading }: Props) {
         {data.report && (
           <details className="rounded-lg border border-border/40 bg-base/20 px-3 py-2 group">
             <summary className="cursor-pointer text-[11px] font-medium text-secondary hover:text-foreground transition-colors select-none">
-              📄 查看完整研究报告(global-stock-data)
+              📄 查看完整研究报告({srcLabel})
             </summary>
             <div className="mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-secondary border-t border-border/30 pt-2">
               {data.report}
@@ -225,7 +228,7 @@ export function AiPredictPanel({ data, loading }: Props) {
         {/* 免责 */}
         <div className="flex items-center gap-1.5 text-[9px] text-muted/70 pt-1 border-t border-border/30">
           <ShieldAlert className="h-3 w-3 shrink-0" />
-          由 Claude Code · global-stock-data 技能生成, 仅供参考, 不构成投资建议 · 生成于 {new Date(data.generated_at).toLocaleString('zh-CN')}
+          由 Claude Code · {srcFooter}生成, 仅供参考, 不构成投资建议 · 生成于 {new Date(data.generated_at).toLocaleString('zh-CN')}
         </div>
       </div>
     </motion.div>

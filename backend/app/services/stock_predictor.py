@@ -494,4 +494,5 @@ async def predict_stock(repo, symbol: str, name: str = "", source: str = "global
         "report": report,
         "close": close,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "source": source,
     }

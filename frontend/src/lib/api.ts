@@ -207,6 +207,8 @@ export interface PredictResponse {
   report?: string
   close: number | null
   generated_at: string
+  /** 数据来源: global = global-stock-data 技能自带抓取; followin = Followin MCP 实时数据 */
+  source?: 'global' | 'followin'
 }
 
 // ===== Kline =====

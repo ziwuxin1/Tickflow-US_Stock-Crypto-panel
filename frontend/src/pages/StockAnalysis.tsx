@@ -12,6 +12,7 @@ import { CpFooter } from '@/components/cyberpunk/CpFooter'
 import { CpTopBar } from '@/components/cyberpunk/CpTopBar'
 import { StockLogo } from '@/components/StockLogo'
 import { api, type PredictResponse } from '@/lib/api'
+import { loadPrediction, savePrediction } from '@/lib/predictStore'
 import { useLastStock } from '@/lib/useLastStock'
 import { useQuoteStatus, useSettings } from '@/lib/useSharedQueries'
 import { QK } from '@/lib/queryKeys'
@@ -343,9 +344,9 @@ function StockAnalysisBoard({ symbol, name, onOpenPreview }: {
   const { data: settings } = useSettings()
   const followinOn = settings?.followin_enabled ?? true
 
-  // 切换标的时清空上一只的预测
+  // 切换标的时自动恢复该标的上次的预测(返回列表再进来 / 刷新不丢失)
   useEffect(() => {
-    setPred(null)
+    setPred(loadPrediction(symbol))
     setPredLoading(false)
   }, [symbol])
 
@@ -353,7 +354,9 @@ function StockAnalysisBoard({ symbol, name, onOpenPreview }: {
     if (predLoading) return
     setPredLoading(true)
     try {
-      setPred(await api.stockPredict(symbol, name ?? '', source))
+      const r = await api.stockPredict(symbol, name ?? '', source)
+      setPred(r)
+      savePrediction(symbol, r)  // 自动保存, 供下次自动恢复
     } catch (e: any) {
       const msg = String(e?.message ?? 'AI 预测失败')
       toast(msg.includes('API Key') || msg.includes('api_key')
