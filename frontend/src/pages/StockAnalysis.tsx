@@ -7,6 +7,7 @@ import { StockFinancialSearch } from '@/components/financials/StockFinancialSear
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { AnalysisKChart, type PriceLevel, type LevelType } from '@/components/stock-analysis/AnalysisKChart'
 import { AiPredictPanel, predictionToLevels } from '@/components/stock-analysis/AiPredictPanel'
+import { FollowinConsoleDialog } from '@/components/stock-analysis/FollowinConsoleDialog'
 import { WatchlistCpTable } from '@/components/stock-analysis/WatchlistCpTable'
 import { CpFooter } from '@/components/cyberpunk/CpFooter'
 import { CpTopBar } from '@/components/cyberpunk/CpTopBar'
@@ -341,6 +342,7 @@ function StockAnalysisBoard({ symbol, name, onOpenPreview }: {
   // AI 自动预测: 结构化点位(画线) + 可视化报告面板
   const [pred, setPred] = useState<PredictResponse | null>(null)
   const [predLoading, setPredLoading] = useState(false)
+  const [followinConsoleOpen, setFollowinConsoleOpen] = useState(false)
   const { data: settings } = useSettings()
   const followinOn = settings?.followin_enabled ?? true
 
@@ -484,6 +486,16 @@ function StockAnalysisBoard({ symbol, name, onOpenPreview }: {
                 </div>
               )}
             </div>
+            {/* Followin 数据检索对话框入口 */}
+            <button
+              type="button"
+              onClick={() => setFollowinConsoleOpen(true)}
+              title="打开 Followin 数据检索(新闻 / 指标 / 信号)"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-[rgba(94,242,228,.4)] bg-[rgba(94,242,228,.06)] text-[#5ef2e4] text-xs font-medium hover:bg-[rgba(94,242,228,.12)] transition-all"
+            >
+              <Radio className="h-3.5 w-3.5" />
+              Followin
+            </button>
             <span className="text-[10px] text-muted font-mono">{rows.length} 个交易日</span>
           </div>
         </div>
@@ -505,6 +517,12 @@ function StockAnalysisBoard({ symbol, name, onOpenPreview }: {
         {/* AI 自动预测可视化报告(生成中显示骨架屏) */}
         <AiPredictPanel data={pred} loading={predLoading} />
       </div>
+      <FollowinConsoleDialog
+        open={followinConsoleOpen}
+        onClose={() => setFollowinConsoleOpen(false)}
+        symbol={symbol}
+        name={name}
+      />
     </div>
   )
 }

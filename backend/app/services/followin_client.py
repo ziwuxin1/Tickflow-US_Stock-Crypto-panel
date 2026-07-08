@@ -173,6 +173,47 @@ def _num(v) -> float | None:
         return None
 
 
+import re as _re
+
+_TICKER_RE = _re.compile(r"\b[A-Z]{1,6}\b")
+
+
+def _tickers(text: str) -> list[str]:
+    """从查询里粗提取可能的 ticker(大写 1-6 字母),供 metrics/signal 用。"""
+    return list(dict.fromkeys(_TICKER_RE.findall((text or "").upper())))[:5]
+
+
+def console_query(tool: str, query: str, mode: str = "standard",
+                  asset_type: str = "", timeout: float = 45.0) -> dict:
+    """Followin 控制台查询(前端对话框用): tool ∈ news / metrics / signal。
+
+    返回该工具的原始业务 JSON(results/meta)。失败抛 FollowinError。
+    """
+    q = (query or "").strip()
+    args: dict = {}
+    if asset_type in ("crypto", "tradfi"):
+        args["asset_type"] = asset_type
+    if tool == "news":
+        args.update({
+            "query": q,
+            "search_depth": "quick" if mode == "quick" else "standard",
+            "limit": 15, "verbosity": "standard",
+        })
+    elif tool == "signal":
+        kw = _tickers(q)
+        args.update({"query": q, "limit": 15, "verbosity": "standard"})
+        if kw:
+            args["keywords"] = kw
+    elif tool == "metrics":
+        kw = _tickers(q)
+        args.update({"query": q or "comprehensive analysis", "limit": 10, "verbosity": "detail"})
+        if kw:
+            args["keywords"] = kw
+    else:
+        raise FollowinError(f"未知 Followin 工具: {tool}")
+    return call_tool(tool, args, timeout=timeout)
+
+
 def daily_kline(symbol: str, limit: int = 365) -> list[dict]:
     """日K历史 → [{date, open, high, low, close, volume}, ...](旧→新排序)。
 

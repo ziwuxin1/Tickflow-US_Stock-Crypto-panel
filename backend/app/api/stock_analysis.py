@@ -208,6 +208,38 @@ async def predict(request: Request, req: PredictRequest):
         raise HTTPException(502, f"AI 预测失败: {e}") from e
 
 
+class FollowinConsoleRequest(BaseModel):
+    # tool: news(新闻检索) / metrics(指标) / signal(信号)
+    tool: str = "news"
+    query: str = ""
+    # news: quick(快速) / standard(标准)
+    mode: str = "standard"
+    asset_type: str = ""  # crypto / tradfi / 空=自动
+
+
+@router.post("/followin-console")
+async def followin_console(req: FollowinConsoleRequest) -> dict:
+    """Followin 控制台查询(个股页对话框): 直接调 Followin MCP 的 news/metrics/signal。
+
+    需先在「设置 → Followin」配置 key 且启用; 未配置/关闭则拒绝。
+    """
+    from app.services import followin_client, preferences
+
+    if req.tool not in ("news", "metrics", "signal"):
+        raise HTTPException(400, "tool 仅支持 news / metrics / signal")
+    if not preferences.get_followin_enabled():
+        raise HTTPException(400, "Followin 数据源已关闭,请在「设置 → Followin」启用")
+
+    import anyio
+    try:
+        data = await anyio.to_thread.run_sync(
+            lambda: followin_client.console_query(req.tool, req.query, req.mode, req.asset_type)
+        )
+    except followin_client.FollowinError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"tool": req.tool, "data": data}
+
+
 # ================================================================
 # 报告 CRUD(历史报告持久化)
 # ================================================================

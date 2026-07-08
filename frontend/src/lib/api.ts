@@ -1424,6 +1424,13 @@ export const api = {
       body: JSON.stringify({ symbol, name, source }),
     }),
 
+  /** Followin 控制台查询: news(新闻检索) / metrics(指标) / signal(信号) */
+  followinConsole: (params: { tool: 'news' | 'metrics' | 'signal'; query: string; mode?: string; asset_type?: string }) =>
+    request<{ tool: string; data: any }>('/api/stock-analysis/followin-console', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
   stockAnalysisReportsList: () =>
     request<{ reports: AiStockReport[] }>('/api/stock-analysis/reports'),
 
