@@ -1,0 +1,218 @@
+"""Followin MCP 直连客户端(JSON-RPC over streamable HTTP)。
+
+不 spawn LLM, 直接对 followin_mcp_url 发 tools/call 取结构化数据, 用于把原本
+走 TickFlow 的数据(日K / 实时报价 / 财务)改由 Followin 供数。
+
+Key 取自 secrets.json(followin_api_key), 回退 config。协议: MCP streamable-HTTP,
+每次调用做 initialize → notifications/initialized → tools/call(短会话, 用后即弃)。
+
+配额有限(默认 1000 次/天), 高频路径(实时轮询/全市场批量)慎用。
+"""
+from __future__ import annotations
+
+import json
+import logging
+
+import httpx
+
+from app import secrets_store
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+_PROTOCOL_VERSION = "2025-06-18"
+_DEFAULT_TIMEOUT = 30.0
+
+
+class FollowinError(RuntimeError):
+    """Followin 取数失败(未配置 / 鉴权失败 / 协议错误 / 无数据)。"""
+
+
+def _headers(session_id: str | None = None) -> dict:
+    key = secrets_store.get_followin_key()
+    if not key:
+        raise FollowinError("未配置 Followin API Key(设置 → Followin)")
+    h = {
+        "x-api-key": key,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if session_id:
+        h["Mcp-Session-Id"] = session_id
+    return h
+
+
+def _parse_body(resp: httpx.Response) -> dict:
+    """解析 MCP 响应体: application/json 或 text/event-stream(取最后一帧 data)。"""
+    ctype = resp.headers.get("content-type", "")
+    if "text/event-stream" in ctype:
+        payload: str | None = None
+        for line in resp.text.splitlines():
+            s = line.strip()
+            if s.startswith("data:"):
+                payload = s[5:].strip()
+        if payload is None:
+            raise FollowinError("Followin SSE 响应无 data 帧")
+        return json.loads(payload)
+    return json.loads(resp.text)
+
+
+def _rpc(client: httpx.Client, method: str, params: dict | None, rpc_id: int,
+         session_id: str | None) -> tuple[httpx.Response, dict]:
+    body: dict = {"jsonrpc": "2.0", "id": rpc_id, "method": method}
+    if params is not None:
+        body["params"] = params
+    resp = client.post(settings.followin_mcp_url, json=body, headers=_headers(session_id))
+    if resp.status_code in (401, 403):
+        raise FollowinError("Followin API Key 无效或无权限(鉴权失败)")
+    resp.raise_for_status()
+    return resp, _parse_body(resp)
+
+
+def _notify(client: httpx.Client, method: str, session_id: str | None) -> None:
+    """发通知(无 id, 不等结果)。"""
+    body = {"jsonrpc": "2.0", "method": method}
+    try:
+        client.post(settings.followin_mcp_url, json=body, headers=_headers(session_id))
+    except httpx.HTTPError:
+        pass
+
+
+def _extract_tool_result(result: dict) -> dict:
+    """从 MCP tools/call 结果里取出业务 JSON。
+
+    优先 structuredContent; 否则取 content[] 里第一个 text 块解析 JSON。
+    """
+    if isinstance(result.get("structuredContent"), dict):
+        return result["structuredContent"]
+    for block in result.get("content", []) or []:
+        if isinstance(block, dict) and block.get("type") == "text":
+            try:
+                return json.loads(block["text"])
+            except (json.JSONDecodeError, KeyError, TypeError):
+                continue
+    raise FollowinError("Followin 工具结果无可解析的 JSON")
+
+
+def _safe_text(result: dict) -> str:
+    for block in result.get("content", []) or []:
+        if isinstance(block, dict) and block.get("type") == "text":
+            return str(block.get("text", ""))[:200]
+    return ""
+
+
+def call_tool(name: str, arguments: dict, timeout: float = _DEFAULT_TIMEOUT) -> dict:
+    """调用一个 Followin MCP 工具, 返回其业务 JSON(已解包 content)。
+
+    完整握手后 tools/call; 抛 FollowinError 表示失败(调用方决定回退)。
+    """
+    with httpx.Client(timeout=timeout) as client:
+        resp, init = _rpc(client, "initialize", {
+            "protocolVersion": _PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "alphaflow", "version": "1.0"},
+        }, rpc_id=1, session_id=None)
+        if "error" in init:
+            raise FollowinError(f"initialize 失败: {init['error']}")
+        session_id = resp.headers.get("mcp-session-id")
+        _notify(client, "notifications/initialized", session_id)
+
+        _, out = _rpc(client, "tools/call",
+                      {"name": name, "arguments": arguments},
+                      rpc_id=2, session_id=session_id)
+        if "error" in out:
+            raise FollowinError(f"tools/call 失败: {out['error']}")
+        result = out.get("result", {})
+        if result.get("isError"):
+            raise FollowinError(f"Followin 工具返回错误: {_safe_text(result)}")
+        return _extract_tool_result(result)
+
+
+# ================================================================
+# 符号映射: app 用 "AAPL.US" / crypto "BTCUSDT"; Followin 用裸 ticker + asset_type
+# ================================================================
+
+def _split_symbol(symbol: str) -> tuple[str, str]:
+    """app 符号 → (followin_keyword, asset_type)。
+
+    "AAPL.US" → ("AAPL", "tradfi"); 其它交易所后缀去后缀按 tradfi; 无后缀视为 crypto。
+    """
+    s = symbol.strip().upper()
+    if s.endswith(".US"):
+        return s[:-3], "tradfi"
+    if "." in s:
+        return s.split(".")[0], "tradfi"
+    return s, "crypto"
+
+
+# ================================================================
+# 高层取数: 映射到 app 数据结构
+# ================================================================
+
+def _num(v) -> float | None:
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def daily_kline(symbol: str, limit: int = 365) -> list[dict]:
+    """日K历史 → [{date, open, high, low, close, volume}, ...](旧→新排序)。
+
+    limit 上限 365(Followin 历史序列上限)。空/失败抛 FollowinError。
+    """
+    kw, asset = _split_symbol(symbol)
+    data = call_tool("metrics", {
+        "keywords": [kw],
+        "asset_type": asset,
+        "categories": ["market"],
+        "query": "daily OHLCV candles history",
+        "time_range": "365d",
+        "limit": max(1, min(365, limit)),
+    })
+    rows = (((data or {}).get("results") or {}).get("market") or {}).get("history") or []
+    out = [
+        {
+            "date": r["date"],
+            "open": float(r["open"]),
+            "high": float(r["high"]),
+            "low": float(r["low"]),
+            "close": float(r["close"]),
+            "volume": float(r.get("volume") or 0),
+        }
+        for r in rows if r.get("date") is not None
+    ]
+    if not out:
+        raise FollowinError(f"Followin 无 {symbol} 日K数据")
+    out.sort(key=lambda x: x["date"])
+    return out
+
+
+def quote(symbol: str) -> dict:
+    """实时报价快照 → {symbol, price, open, high, low, prev_close, volume, ...}。"""
+    kw, asset = _split_symbol(symbol)
+    data = call_tool("metrics", {
+        "keywords": [kw],
+        "asset_type": asset,
+        "categories": ["market"],
+        "query": "latest realtime quote snapshot",
+        "limit": 1,
+    })
+    snaps = (((data or {}).get("results") or {}).get("market") or {}).get("snapshot") or []
+    if not snaps:
+        raise FollowinError(f"Followin 无 {symbol} 报价")
+    s = snaps[0]
+    return {
+        "symbol": symbol,
+        "name": s.get("name"),
+        "price": _num(s.get("price")),
+        "open": _num(s.get("open")),
+        "high": _num(s.get("dayHigh")),
+        "low": _num(s.get("dayLow")),
+        "prev_close": _num(s.get("previousClose")),
+        "volume": _num(s.get("volume")),
+        "market_cap": _num(s.get("marketCap")),
+        "year_high": _num(s.get("yearHigh")),
+        "year_low": _num(s.get("yearLow")),
+        "exchange": s.get("exchange"),
+    }
