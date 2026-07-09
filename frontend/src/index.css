@@ -112,6 +112,18 @@ body {
 /* 斜纹 GPU 无缝流动(位移恰好一周期 5px*2*sqrt(2)=14.142px) */
 @keyframes cpStripe { to { transform: translateX(14.142px) } }
 
+/* ===== Followin 智能体控制台专用动效(design_handoff_followin_agent) ===== */
+/* 工具轨迹逐行淡入上移 */
+@keyframes cpTrace { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: none } }
+/* 加载扫描进度条: 40% 宽的黄光条来回扫 */
+@keyframes cpBar { 0% { transform: translateX(-100%) } 100% { transform: translateX(350%) } }
+/* 流式输出光标块闪烁 */
+@keyframes cpCaret { 0%, 50% { opacity: 1 } 51%, 100% { opacity: 0 } }
+/* 加载 spinner 旋转 */
+@keyframes cpSpin { to { transform: rotate(360deg) } }
+/* 呼吸(选中态/LIVE 点等) */
+@keyframes cpPulse { 0%, 100% { opacity: 1 } 50% { opacity: .45 } }
+
 /* ===== 指数页动效(design_handoff_index_page): 分时端点涟漪/呼吸/辉光 ===== */
 @keyframes ripple { 0% { transform: scale(.35); opacity: .9 } 70% { opacity: .25 } 100% { transform: scale(3); opacity: 0 } }
 @keyframes dotPulse { 0%, 100% { transform: scale(1) } 50% { transform: scale(1.25) } }

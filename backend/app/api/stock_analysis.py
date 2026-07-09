@@ -244,6 +244,7 @@ class FollowinAgentRequest(BaseModel):
     question: str
     symbol: str = ""
     name: str = ""
+    agent_id: str = ""
 
 
 @router.post("/followin-agent")
@@ -255,8 +256,21 @@ async def followin_agent_ep(req: FollowinAgentRequest) -> dict:
     if not preferences.get_followin_enabled():
         raise HTTPException(400, "Followin 数据源已关闭,请在「设置 → Followin」启用")
     from app.services.stock_predictor import followin_agent
+    skills: list[str] | None = None
+    agent_name = ""
+    agent_role = ""
+    if req.agent_id:
+        from app.services import followin_agents
+        agent = followin_agents.get_agent(req.agent_id)
+        if agent:
+            skills = agent.get("skills") or []
+            agent_name = agent.get("name") or ""
+            agent_role = agent.get("role") or ""
     try:
-        answer = await followin_agent(req.question, req.symbol, req.name)
+        answer = await followin_agent(
+            req.question, req.symbol, req.name,
+            skills=skills, agent_name=agent_name, agent_role=agent_role,
+        )
         return {"answer": answer}
     except ValueError as e:
         raise HTTPException(400, str(e)) from e

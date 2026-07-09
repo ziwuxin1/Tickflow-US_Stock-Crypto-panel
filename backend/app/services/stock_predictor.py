@@ -450,44 +450,84 @@ def _local_close(repo, symbol: str) -> float | None:
         return None
 
 
-async def followin_agent(question: str, symbol: str = "", name: str = "") -> str:
+async def followin_agent(
+    question: str,
+    symbol: str = "",
+    name: str = "",
+    skills: list[str] | None = None,
+    agent_name: str = "",
+    agent_role: str = "",
+) -> str:
     """Followin AI 智能体: spawn claude -p + Followin MCP, 让 LLM 自己编排工具并综合成 markdown。
 
     不同于 console_query(单次工具调用贴原始数据), 这里 AI 会自行决定调 metrics/news/signal,
     遇到大结果自行提取关键项, 最后综合成一份中文分析。返回 markdown 文本; 失败抛 ValueError。
     """
+    from app.services import followin_agents
+
     fcfg = _followin_mcp_config()
     if not fcfg:
         raise ValueError("未找到 Followin MCP 配置, 请先在「设置 → Followin」配置 key")
+
+    extra_tools = followin_agents.tools_for_skills(skills or [])
+    tool_cn = "、".join(followin_agents.tool_labels(extra_tools))
+
     fd, mcp_path = tempfile.mkstemp(suffix=".json", prefix="followin-mcp-")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump({"mcpServers": {"followin": fcfg}}, f)
     ctx = f"当前标的上下文: {name} {symbol}".strip() if (name or symbol) else ""
+
+    identity = ""
+    if agent_name or agent_role:
+        who = agent_name or "分析智能体"
+        role_txt = f"({agent_role})" if agent_role else ""
+        identity = f"你是{who}{role_txt},一位专注的金融分析智能体。"
+    scope = (
+        f"你只被授权调用以下 Followin 工具:{tool_cn}——"
+        "只用这些工具作答,不要假设能用未授权的数据。\n"
+    )
+
+    # 按【该智能体实际授权的工具】动态拼提示词:只列它有的工具、只要求它能支撑的章节,
+    # 缺的维度直接省略——避免智能体去试未授权工具、写出「未获授权/数据缺失」这类吓人措辞。
+    _tool_guide = {
+        "mcp__followin__metrics": "- mcp__followin__metrics:现价/涨跌、OHLCV、技术指标(RSI/MACD/均线50·200/EMA/布林/ATR)、基本面(三表/估值PE·PB·EV/分析师评级与目标价/EPS预期/同业)",
+        "mcp__followin__news": "- mcp__followin__news:最新新闻/研报/媒体要点(近 1-3 天)",
+        "mcp__followin__signal": "- mcp__followin__signal:谁在买/情绪(加密=KOL喊单+交易员仓位;股票=内部人Form4+13F机构)",
+        "mcp__followin__twitter": "- mcp__followin__twitter:X(推特)深度检索——高级搜索/用户档案/关系图谱/完整线程",
+        "mcp__followin__subscription": "- mcp__followin__subscription:关注/订阅清单与未读提醒",
+    }
+    _has = set(extra_tools)
+    guide_lines = "\n".join(_tool_guide[t] for t in extra_tools if t in _tool_guide)
+
+    sections = ["**一句话结论**(方向 + 核心理由)"]
+    if "mcp__followin__metrics" in _has:
+        sections.append("**行情与技术面**:现价、涨跌、关键技术位(支撑/压力/均线/RSI/MACD/布林),用 Markdown 表格列 指标+数值+含义")
+        sections.append("**基本面 / 估值**(股票):营收/净利/EPS、估值、分析师目标价(低/中/高)、下季预期;加密可略过")
+    if "mcp__followin__news" in _has:
+        sections.append("**消息面**:3-5 条最新要点(带时间)")
+    if _has & {"mcp__followin__signal", "mcp__followin__twitter"}:
+        sections.append("**资金面与情绪**:谁在买、KOL/机构动向、多空对比")
+    sections.append("**风险与关注点**")
+    section_txt = "\n".join(f"{i}. {s}" for i, s in enumerate(sections, 1))
+
     prompt = (
-        "你是简体中文金融数据分析助手。请尽可能【全面详尽】地用 Followin MCP 工具查询真实数据后, "
+        identity + scope
+        + "你是简体中文金融数据分析助手。请尽可能【全面详尽】地用你被授权的 Followin 工具查询真实数据后, "
         "输出一份内容丰富的综合分析(Markdown)。宁可慢、宁可长, 也要信息全 —— 不要惜字, 尽量多给数据与解读。\n"
         f"{ctx}\n用户问题: {question}\n\n"
-        "请【按需调用多个工具】(不要只调一个), 尽量把相关维度都查一遍:\n"
-        "- mcp__followin__metrics: 现价/涨跌、OHLCV、技术指标(RSI / MACD / 均线 50·200 / EMA / 布林带 / ATR)、"
-        "基本面(利润表·资产负债·现金流 / 估值 PE·PB·EV / 分析师评级与目标价 / EPS 预期 / 同业)\n"
-        "- mcp__followin__news: 最新新闻 / 研报 / 推特要点(近 1-3 天)\n"
-        "- mcp__followin__signal: 谁在买 / 情绪(加密看 KOL 喊单 + 交易员仓位; 股票看内部人 Form4 + 13F 机构)\n\n"
-        "输出结构(尽量详尽, 有数据就展开):\n"
-        "1. **一句话结论**(方向 + 核心理由)\n"
-        "2. **行情与技术面**: 现价、涨跌、关键技术位(支撑/压力/均线/RSI/MACD/布林), 用 Markdown 表格列指标+数值+含义\n"
-        "3. **基本面 / 估值**(股票): 营收/净利/EPS、估值、分析师目标价(低/中/高)、下季预期; 加密可略过\n"
-        "4. **消息面**: 3-5 条最新要点(带时间)\n"
-        "5. **资金面与情绪**: 谁在买、KOL/机构动向、多空对比\n"
-        "6. **风险与关注点**\n"
+        "你被授权的工具及其覆盖维度(【只能】调用这些, 请按需多调、把相关维度都查一遍):\n"
+        f"{guide_lines}\n\n"
+        "输出结构(已按你的工具范围为你裁剪好, 只写下列章节; 有数据就展开):\n"
+        f"{section_txt}\n"
+        "严格规则:你【只有】上面列出的工具, 其余维度不属于你的职责范围——直接省略对应章节即可,"
+        "【严禁】尝试调用未授权工具, 也【不要】出现『未获授权/无法调用/暂时无法/数据缺失』之类措辞或为此道歉。\n"
+        "排版规范:①加粗(**)只用于【少数关键短语/结论方向】, 【严禁】把整句或整段加粗; "
+        "②数字务必规范——带千分位、百分比保留 1~2 位小数, 相邻的两个数值之间必须用文字或标点分清, "
+        "【严禁】把两个数字黏成一串(如写成 $62,80062,900 或 0.70.9% 这类); ③多用 Markdown 表格承载数据。\n"
         "数据一律以工具返回为准, 不要编造; 工具返回过大时自行提取关键项。只输出分析正文, 不要复述本提示词。"
     )
-    _FL_TOOLS = (
-        "mcp__followin__metrics", "mcp__followin__news",
-        "mcp__followin__signal", "mcp__followin__twitter",
-        "mcp__followin__subscription",
-    )
     try:
-        return await _run_claude_cli(prompt, mcp_config_path=mcp_path, extra_tools=_FL_TOOLS)
+        return await _run_claude_cli(prompt, mcp_config_path=mcp_path, extra_tools=extra_tools)
     finally:
         try:
             os.remove(mcp_path)

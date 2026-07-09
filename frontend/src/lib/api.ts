@@ -696,6 +696,37 @@ export interface Preferences {
   screener_auto_run: boolean
 }
 
+// ===== Followin AI 智能体(Cyberpunk 控制台) =====
+/** 自建 AI 智能体:身份(名/头衔/分组/色/简介)+ 勾选的擅长技能 id 列表。后端存储。 */
+export interface FollowinAgent {
+  id: string
+  name: string
+  role: string
+  group: string
+  color: string
+  desc: string
+  skills: string[]
+}
+
+/** 技能目录项:group=news(新闻检索·永久免费) / decision(决策工具·按额度)。 */
+export interface FollowinSkillDef {
+  id: string
+  group: 'news' | 'decision'
+  title: string
+  desc: string
+  tags: string[]
+}
+
+/** 新建/编辑智能体的草稿(id 由后端生成)。 */
+export interface FollowinAgentDraft {
+  name: string
+  role?: string
+  group?: string
+  color?: string
+  desc?: string
+  skills?: string[]
+}
+
 // ===== Strategy Alert =====
 export interface StrategyAlertEvent {
   source: 'strategy'
@@ -1431,11 +1462,41 @@ export const api = {
       body: JSON.stringify(params),
     }),
 
-  /** Followin AI 智能体: 让 claude 自己调 Followin 工具综合作答(markdown, 耗时数分钟) */
-  followinAgent: (params: { question: string; symbol?: string; name?: string }) =>
+  /** Followin AI 智能体: 让 claude 自己调 Followin 工具综合作答(markdown, 耗时数分钟)。
+   * 传 agent_id 时后端按该智能体勾选的技能限制可调工具、并以其身份署名作答。 */
+  followinAgent: (params: { question: string; symbol?: string; name?: string; agent_id?: string }) =>
     request<{ answer: string }>('/api/stock-analysis/followin-agent', {
       method: 'POST',
       body: JSON.stringify(params),
+    }),
+
+  // ===== Followin 智能体 CRUD + 技能目录(后端存储) =====
+  /** 拉取全部智能体 + 分组(首次自动落 6 个种子)。尾斜杠避免 FastAPI 307。 */
+  followinAgentsList: () =>
+    request<{ agents: FollowinAgent[]; groups: string[] }>('/api/followin-agents/'),
+
+  /** 技能目录(11 项:新闻检索 6 + 决策工具 5),供编辑器渲染。 */
+  followinSkillCatalog: () =>
+    request<{ catalog: FollowinSkillDef[] }>('/api/followin-agents/skill-catalog'),
+
+  /** 新建智能体。name 必填,否则后端 400。尾斜杠避免 FastAPI 307。 */
+  followinAgentCreate: (body: FollowinAgentDraft) =>
+    request<{ agent: FollowinAgent }>('/api/followin-agents/', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  /** 更新智能体。 */
+  followinAgentUpdate: (id: string, body: FollowinAgentDraft) =>
+    request<{ agent: FollowinAgent }>(`/api/followin-agents/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
+  /** 删除智能体。 */
+  followinAgentDelete: (id: string) =>
+    request<{ ok: boolean }>(`/api/followin-agents/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
     }),
 
   stockAnalysisReportsList: () =>
