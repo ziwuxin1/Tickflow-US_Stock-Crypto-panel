@@ -51,25 +51,19 @@
 <table>
   <tr>
     <td width="50%" align="center"><b>看板 Dashboard</b></td>
-    <td width="50%" align="center"><b>策略 Screener</b></td>
+    <td width="50%" align="center"><b>个股分析 Stock Analysis(关键价位 + AI 预测线)</b></td>
   </tr>
   <tr>
     <td width="50%"><img src="./screenshots/dashboard.png" alt="看板页面"></td>
-    <td width="50%"><img src="./screenshots/screener.png" alt="策略页"></td>
+    <td width="50%"><img src="./screenshots/个股分析.png" alt="个股分析"></td>
   </tr>
   <tr>
-    <td width="50%" align="center"><b>回测 Backtest</b></td>
-    <td width="50%" align="center"><b>监控中心 Monitor</b></td>
+    <td width="50%" align="center"><b>自选股行情表 Watchlist</b></td>
+    <td width="50%" align="center"><b>周期彩虹 Cycle Wave(BTC/ETH 全周期视图)</b></td>
   </tr>
   <tr>
-    <td width="50%"><img src="./screenshots/backtest.png" alt="回测页"></td>
-    <td width="50%"><img src="./screenshots/monitor.png" alt="监控中心"></td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center"><b>周期彩虹 Cycle Wave(BTC/ETH 全周期视图)</b></td>
-  </tr>
-  <tr>
-    <td colspan="2"><img src="./screenshots/周期彩虹.png" alt="周期彩虹"></td>
+    <td width="50%"><img src="./screenshots/个股分析-自选股.png" alt="自选股行情表"></td>
+    <td width="50%"><img src="./screenshots/周期彩虹.png" alt="周期彩虹"></td>
   </tr>
 </table>
 
