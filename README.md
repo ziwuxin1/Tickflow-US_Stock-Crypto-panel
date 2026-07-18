@@ -65,6 +65,12 @@
     <td width="50%"><img src="./screenshots/backtest.png" alt="回测页"></td>
     <td width="50%"><img src="./screenshots/monitor.png" alt="监控中心"></td>
   </tr>
+  <tr>
+    <td colspan="2" align="center"><b>周期彩虹 Cycle Wave(BTC/ETH 全周期视图)</b></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="./screenshots/周期彩虹.png" alt="周期彩虹"></td>
+  </tr>
 </table>
 
 <div align="center">

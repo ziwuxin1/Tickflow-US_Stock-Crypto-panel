@@ -4,6 +4,12 @@
 
 ![看板页面](./dashboard.png)
 
+### 周期彩虹 Cycle Wave(BTC/ETH)
+
+全量历史周期着色 + 牛熊/减半标注 + 抄底/卖出价位带:
+
+![周期彩虹](./周期彩虹.png)
+
 ### 策略 Screener
 
 ![策略页](./screener.png)
