@@ -1448,6 +1448,12 @@ export const api = {
   stockAnalysisLevels: (symbol: string, days = 120) =>
     request<StockLevels>(`/api/stock-analysis/levels?symbol=${encodeURIComponent(symbol)}&days=${days}`),
 
+  /** 周期彩虹模式: BTC 全量历史日线收盘价(含今日实时蜡烛), 30s 轮询即近实时 */
+  cycleHistory: (symbol: string) =>
+    request<{ symbol: string; rows: { date: string; close: number }[] }>(
+      `/api/stock-analysis/cycle?symbol=${encodeURIComponent(symbol)}`,
+    ),
+
   /** AI 自动预测: 经本机 Claude Code CLI 跑 global-stock-data 技能(耗时数分钟) */
   stockPredict: (symbol: string, name = '', source: 'global' | 'followin' = 'global') =>
     request<PredictResponse>('/api/stock-analysis/predict', {

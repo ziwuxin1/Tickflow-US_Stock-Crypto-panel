@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, BrainCircuit, Sparkles, Star, LineChart, History as HistoryIcon, Loader2, ExternalLink, Bell, ChevronDown, Globe, Radio } from 'lucide-react'
+import { ArrowLeft, BrainCircuit, Sparkles, Star, LineChart, History as HistoryIcon, Loader2, ExternalLink, Bell, ChevronDown, Globe, Radio, Waves } from 'lucide-react'
 import { EmptyState } from '@/components/EmptyState'
 import { StockFinancialSearch } from '@/components/financials/StockFinancialSearch'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { AnalysisKChart, type PriceLevel, type LevelType } from '@/components/stock-analysis/AnalysisKChart'
+import { CycleWaveChart } from '@/components/stock-analysis/CycleWaveChart'
 import { AiPredictPanel, predictionToLevels } from '@/components/stock-analysis/AiPredictPanel'
 import { FollowinConsoleDialog } from '@/components/stock-analysis/FollowinConsoleDialog'
 import { WatchlistCpTable } from '@/components/stock-analysis/WatchlistCpTable'
@@ -347,6 +348,18 @@ function StockAnalysisBoard({ symbol, name, onOpenPreview }: {
   const { data: settings } = useSettings()
   const followinOn = settings?.followin_enabled ?? true
 
+  // 周期彩虹模式(BTC / ETH): 全量历史 + 彩虹着色 + 牛熊/减半周期
+  const cycleCapable = symbol === 'BTCUSDT' || symbol === 'ETHUSDT'
+  const [mode, setMode] = useState<'levels' | 'cycle'>('levels')
+  useEffect(() => { setMode('levels') }, [symbol])
+  const cycleQ = useQuery({
+    queryKey: ['cycle-history', symbol],
+    queryFn: () => api.cycleHistory(symbol),
+    enabled: cycleCapable && mode === 'cycle',
+    staleTime: 25_000,
+    refetchInterval: 30_000,   // 今日蜡烛为 Binance 实时进行中蜡烛, 轮询即近实时
+  })
+
   // 切换标的时自动恢复该标的上次的预测(返回列表再进来 / 刷新不丢失)
   useEffect(() => {
     setPred(loadPrediction(symbol))
@@ -501,23 +514,62 @@ function StockAnalysisBoard({ symbol, name, onOpenPreview }: {
             <span className="text-[10px] text-muted font-mono">{rows.length} 个交易日</span>
           </div>
         </div>
-        {/* 第二行: 模块标题 */}
+        {/* 第二行: 模块标题(BTC 支持「关键价位 / 周期彩虹」双模式切换) */}
         <div className="flex items-center gap-2">
-          <LineChart className="h-4 w-4 text-[#5ef2e4] shrink-0" />
-          <span className="text-sm font-bold tracking-widest" style={{ color: 'rgba(213,240,33,.9)' }}>关键价位分析</span>
+          {mode === 'cycle'
+            ? <Waves className="h-4 w-4 text-[#5ef2e4] shrink-0" />
+            : <LineChart className="h-4 w-4 text-[#5ef2e4] shrink-0" />}
+          <span className="text-sm font-bold tracking-widest" style={{ color: 'rgba(213,240,33,.9)' }}>
+            {mode === 'cycle' ? '周期彩虹 · CYCLE WAVE' : '关键价位分析'}
+          </span>
+          {cycleCapable && (
+            <div className="inline-flex items-center ml-3 border border-[rgba(94,242,228,.35)]">
+              {([['levels', '关键价位'], ['cycle', '周期彩虹']] as const).map(([m, label]) => (
+                <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  title={m === 'cycle' ? '全量历史彩虹着色 + 牛熊区间 + 减半周期(实时)' : '日 K + 压力支撑等关键价位'}
+                  className={`px-3 py-1 text-[10px] font-bold tracking-widest transition-all ${
+                    mode === m
+                      ? 'bg-[rgba(94,242,228,.18)] text-[#5ef2e4]'
+                      : 'text-muted hover:text-secondary'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
       <div className="p-3">
-        <AnalysisKChart
-          rows={rows}
-          levels={levels}
-          series={levelsQ.data?.series}
-          seriesDates={levelsQ.data?.dates}
-          extraLevels={aiLevels}
-          aiPatterns={pred?.prediction.patterns ?? null}
-        />
-        {/* AI 自动预测可视化报告(生成中显示骨架屏) */}
-        <AiPredictPanel data={pred} loading={predLoading} pendingSource={predSource} />
+        {mode === 'cycle' ? (
+          cycleQ.isLoading ? (
+            <div className="flex flex-col items-center justify-center py-24 gap-2">
+              <Loader2 className="h-5 w-5 animate-spin text-muted" />
+              <span className="text-[10px] font-mono text-muted">首次加载全量历史(Binance 分页拉取)…</span>
+            </div>
+          ) : cycleQ.isError ? (
+            <div className="flex items-center justify-center py-24 text-xs text-danger font-mono">
+              周期数据加载失败: {String((cycleQ.error as any)?.message ?? '未知错误')}
+            </div>
+          ) : (
+            <CycleWaveChart rows={cycleQ.data?.rows ?? []} symbol={symbol} />
+          )
+        ) : (
+          <>
+            <AnalysisKChart
+              rows={rows}
+              levels={levels}
+              series={levelsQ.data?.series}
+              seriesDates={levelsQ.data?.dates}
+              extraLevels={aiLevels}
+              aiPatterns={pred?.prediction.patterns ?? null}
+            />
+            {/* AI 自动预测可视化报告(生成中显示骨架屏) */}
+            <AiPredictPanel data={pred} loading={predLoading} pendingSource={predSource} />
+          </>
+        )}
       </div>
       <FollowinConsoleDialog
         open={followinConsoleOpen}

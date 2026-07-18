@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from datetime import date, timedelta
 
 import polars as pl
@@ -142,6 +143,130 @@ def get_levels(
         "dates": [str(d) for d in dates],
         "series": series,
     }
+
+
+# ===== 周期彩虹(BTC 全量历史日线, 进程内增量缓存) =====
+# Binance 现货最早数据 2017-08-17; 更早(2010-07 起)的历史用 CryptoCompare 拉一次并落盘拼接。
+_CYCLE_SYMBOLS = {"BTCUSDT", "ETHUSDT"}
+_CYCLE_START = date(2013, 1, 1)
+_BINANCE_START = date(2017, 8, 17)
+# blockchain.info 图表接口: 免 key, 日频市场价从 2010-08 起(sampled=false 取全量)
+_EARLY_SOURCE = "https://api.blockchain.info/charts/market-price"
+_cycle_cache: dict[str, pl.DataFrame] = {}
+_cycle_lock = threading.Lock()
+
+
+def _load_early_history(sym: str, data_dir) -> pl.DataFrame:
+    """Binance 上线前(< 2017-08-17)的早期日线: CryptoCompare 拉一次, parquet 落盘永久复用。
+
+    早期历史是不可变数据, 磁盘缓存后不再请求外部接口; 拉取失败由调用方降级为仅 Binance 段。
+    """
+    if sym != "BTCUSDT":
+        return pl.DataFrame()
+    cache = data_dir / "cycle_cache" / "BTCUSDT_early.parquet"
+    if cache.exists():
+        try:
+            return pl.read_parquet(cache)
+        except Exception:  # noqa: BLE001
+            pass
+
+    import httpx
+    from datetime import datetime, timezone
+
+    resp = httpx.get(
+        _EARLY_SOURCE,
+        params={"timespan": "all", "sampled": "false", "format": "json"},
+        timeout=30.0,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    rows = payload.get("values") or []
+    out = []
+    for r in rows:
+        try:
+            d = datetime.fromtimestamp(int(r["x"]), tz=timezone.utc).date()
+            close = float(r["y"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if close <= 0 or d >= _BINANCE_START:
+            continue
+        # 该接口只有市场价单值, OHLC 同价 / 无量; 周期图仅用 close, 足够
+        out.append({
+            "symbol": sym,
+            "date": d,
+            "open": close,
+            "high": close,
+            "low": close,
+            "close": close,
+            "volume": 0.0,
+            "amount": 0.0,
+        })
+    if not out:
+        return pl.DataFrame()
+    df = pl.DataFrame(out).sort("date")
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        df.write_parquet(cache)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("早期历史落盘失败(不影响本次返回): %s", e)
+    return df
+
+
+@router.get("/cycle")
+def cycle_history(request: Request, symbol: str = Query("BTCUSDT", description="仅支持 BTCUSDT")):
+    """周期彩虹模式数据源: 全量历史日线收盘价(含今日进行中的实时蜡烛)。
+
+    - 首次请求: Binance 分页拉 2017-08 至今 + CryptoCompare 拼接 2010-07~2017-08 早期段
+    - 后续请求: 只增量拉最后一天到现在(1 次请求), 今日蜡烛随行情实时更新
+    - 外部源失败时逐级降级(无早期段 / 回退缓存), 不让前端白屏
+    """
+    sym = symbol.strip().upper()
+    if sym not in _CYCLE_SYMBOLS:
+        raise HTTPException(400, f"周期彩虹暂仅支持 {'/'.join(sorted(_CYCLE_SYMBOLS))}")
+
+    from app.data_providers import binance_provider
+
+    with _cycle_lock:
+        cached = _cycle_cache.get(sym)
+        try:
+            if cached is None or cached.is_empty():
+                df = binance_provider.fetch_crypto_daily([sym], _CYCLE_START, None)
+                # 拼接 Binance 上线前的早期历史(2010-07 起, 落盘后不再请求外部接口)
+                try:
+                    early = _load_early_history(sym, request.app.state.repo.store.data_dir)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("早期历史拉取失败, 仅返回 Binance 段: %s", e)
+                    early = pl.DataFrame()
+                if not early.is_empty() and not df.is_empty():
+                    df = (
+                        pl.concat([early, df], how="diagonal_relaxed")
+                        .unique(subset=["date"], keep="last")
+                        .sort("date")
+                    )
+            else:
+                # 从缓存最后一天重拉(覆盖当日进行中蜡烛), 与缓存合并去重
+                last_day = cached["date"].max()
+                fresh = binance_provider.fetch_crypto_daily([sym], last_day, None)
+                df = (
+                    pl.concat([cached, fresh], how="diagonal_relaxed")
+                    .unique(subset=["date"], keep="last")
+                    .sort("date")
+                ) if not fresh.is_empty() else cached
+        except Exception as e:  # noqa: BLE001
+            if cached is None or cached.is_empty():
+                raise HTTPException(502, f"Binance 历史拉取失败: {e}") from e
+            logger.warning("cycle 增量刷新失败, 回退缓存 %s: %s", sym, e)
+            df = cached
+
+        if df.is_empty():
+            raise HTTPException(502, "Binance 未返回任何历史数据")
+        _cycle_cache[sym] = df
+
+    rows = [
+        {"date": str(r["date"]), "close": round(float(r["close"]), 2)}
+        for r in df.select(["date", "close"]).iter_rows(named=True)
+    ]
+    return {"symbol": sym, "rows": rows}
 
 
 class AnalyzeRequest(BaseModel):
